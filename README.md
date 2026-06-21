@@ -31,6 +31,34 @@ APP_DEBUG=false
 ```
 
 Use `127.0.0.1` for local-only access, or `0.0.0.0` to listen on the LAN. Open the Flask URL shown in the terminal, usually `http://127.0.0.1:5000` for local-only or `http://<your-computer-ip>:5000` from another device on the network.
+## Container On Debian
+
+Install Docker and the Compose plugin on the Debian host:
+
+```bash
+sudo apt update
+sudo apt install -y docker.io docker-compose-plugin git
+sudo systemctl enable --now docker
+```
+
+Clone and run the app:
+
+```bash
+git clone https://github.com/cryptocent/torrent_getter.git
+cd torrent_getter
+printf "APP_HOST=0.0.0.0\nAPP_PORT=5000\nAPP_DEBUG=false\n" > .env
+docker compose up -d --build
+```
+
+Open `http://<debian-machine-ip>:5000` from your browser. The SQLite database and downloaded posters are persisted in `./instance` on the host.
+
+Useful commands:
+
+```bash
+docker compose logs -f
+docker compose restart
+docker compose down
+```
 ## Pagination
 
 Use `{page}` where the page number belongs:

@@ -1,0 +1,15 @@
+services:
+  torrent_getter:
+    build: .
+    container_name: torrent_getter
+    env_file:
+      - .env
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_PORT: ${APP_PORT:-5000}
+      APP_DEBUG: ${APP_DEBUG:-false}
+    ports:
+      - "${APP_PORT:-5000}:${APP_PORT:-5000}"
+    volumes:
+      - ./instance:/app/instance
+    restart: unless-stopped
