@@ -19,11 +19,18 @@ python -m pip install -r requirements.txt
 ## Run
 
 ```powershell
-flask --app app run
+python app.py
 ```
 
-Open the local Flask URL shown in the terminal, usually `http://127.0.0.1:5000`.
+The listener is configured from `.env`:
 
+```dotenv
+APP_HOST=0.0.0.0
+APP_PORT=5000
+APP_DEBUG=false
+```
+
+Use `127.0.0.1` for local-only access, or `0.0.0.0` to listen on the LAN. Open the Flask URL shown in the terminal, usually `http://127.0.0.1:5000` for local-only or `http://<your-computer-ip>:5000` from another device on the network.
 ## Pagination
 
 Use `{page}` where the page number belongs:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from flask import Flask, abort, flash, redirect, render_template, request, send_from_directory, url_for
@@ -341,5 +342,53 @@ def _int_from_args(name: str, default: int) -> int:
         return default
 
 
+def _load_env_file(env_path: Path) -> None:
+    if not env_path.exists():
+        return
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+def _server_config_from_env() -> dict:
+    return {
+        "host": _env_value(("APP_HOST", "FLASK_RUN_HOST"), "127.0.0.1"),
+        "port": _int_from_env(("APP_PORT", "FLASK_RUN_PORT"), 5000),
+        "debug": _bool_from_env(("APP_DEBUG", "FLASK_DEBUG"), False),
+    }
+
+
+def _env_value(names: tuple[str, ...], default: str) -> str:
+    for name in names:
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+    return default
+
+
+def _int_from_env(names: tuple[str, ...], default: int) -> int:
+    raw_value = _env_value(names, "")
+    if not raw_value:
+        return default
+    try:
+        return int(raw_value)
+    except ValueError as exc:
+        raise ValueError(f"{names[0]} must be a whole number.") from exc
+
+
+def _bool_from_env(names: tuple[str, ...], default: bool) -> bool:
+    raw_value = _env_value(names, "")
+    if not raw_value:
+        return default
+    return raw_value.lower() in {"1", "true", "yes", "on"}
+
+
 if __name__ == "__main__":
-    create_app().run(debug=True)
+    _load_env_file(Path(__file__).with_name(".env"))
+    create_app().run(**_server_config_from_env())

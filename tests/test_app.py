@@ -1,4 +1,4 @@
-from app import create_app
+from app import _load_env_file, _server_config_from_env, create_app
 from db import (
     connect,
     create_run,
@@ -13,6 +13,21 @@ from db import (
 from scraper import DetailLink, ScrapeConfig, ScrapedItem
 
 
+
+def test_server_config_reads_env_file_without_overriding_existing_env(tmp_path, monkeypatch):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "APP_HOST=0.0.0.0\nAPP_PORT=5000\nAPP_DEBUG=true\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("APP_HOST", raising=False)
+    monkeypatch.delenv("APP_DEBUG", raising=False)
+    monkeypatch.setenv("APP_PORT", "7000")
+
+    _load_env_file(env_path)
+    config = _server_config_from_env()
+
+    assert config == {"host": "0.0.0.0", "port": 7000, "debug": True}
 def test_stop_run_marks_non_active_run_stopping(tmp_path):
     database_path = tmp_path / "test.sqlite"
     app = create_app({"TESTING": True, "DATABASE": str(database_path)})
