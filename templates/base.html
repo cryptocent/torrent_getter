@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Torrent Getter{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+    <header class="site-header">
+        <nav class="nav">
+            <a class="brand" href="{{ url_for('index') }}">Torrent Getter</a>
+            <div class="nav-links">
+                <a href="{{ url_for('index') }}">Start crawl</a>
+                <a href="{{ url_for('items') }}">Browse data</a>
+                <a href="{{ url_for('latest_run') }}">Latest run</a>
+                <form method="post" action="{{ url_for('stop_all_runs') }}" class="nav-stop-form">
+                    <button type="submit" class="danger-button small-button">Stop all</button>
+                </form>
+            </div>
+        </nav>
+    </header>
+
+    <main class="container">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="flash-list">
+                    {% for category, message in messages %}
+                        <div class="flash {{ category }}">{{ message }}</div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

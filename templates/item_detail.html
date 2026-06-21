@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block title %}{{ item.name }} | Torrent Getter{% endblock %}
+
+{% block content %}
+<section class="page-heading compact">
+    <p class="eyebrow">{{ item.link_type }}{% if item.publication_year %} | {{ item.publication_year }}{% endif %}</p>
+    <h1>{{ item.name }}</h1>
+</section>
+
+<section class="panel detail-panel">
+    {% if item.poster_path %}
+        <img class="poster-image" src="{{ url_for('poster', filename=item.poster_path) }}" alt="Poster for {{ item.name }}">
+    {% endif %}
+
+    {% if item.synopsis %}
+        <h2>Synopsis</h2>
+        <p class="preserve">{{ item.synopsis }}</p>
+    {% endif %}
+
+    {% if item.description %}
+        <h2>Details</h2>
+        <p class="preserve">{{ item.description }}</p>
+    {% endif %}
+
+    <h2>Downloads</h2>
+    <div class="download-row">
+        {% for download in downloads %}
+            <a class="button-link" href="{{ download.link_url }}" target="_blank" rel="noreferrer">Open {{ download.label }}</a>
+        {% else %}
+            <a class="button-link" href="{{ item.link_url }}" target="_blank" rel="noreferrer">Open {{ item.link_type }} link</a>
+        {% endfor %}
+    </div>
+
+    <h2>Pages</h2>
+    <dl class="detail-list">
+        <dt>Detail page</dt>
+        <dd><a href="{{ item.detail_url }}" target="_blank" rel="noreferrer">{{ item.detail_url }}</a></dd>
+        <dt>Source page</dt>
+        <dd><a href="{{ item.source_url }}" target="_blank" rel="noreferrer">{{ item.source_url }}</a></dd>
+        {% if item.publication_year %}
+            <dt>Publication year</dt>
+            <dd>{{ item.publication_year }}</dd>
+        {% endif %}
+        <dt>Last seen</dt>
+        <dd>{{ item.last_seen_at }}</dd>
+    </dl>
+</section>
+{% endblock %}

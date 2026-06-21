@@ -1,0 +1,233 @@
+{% extends "base.html" %}
+
+{% block title %}Run #{{ run.id }} | Torrent Getter{% endblock %}
+
+{% block content %}
+{% if is_running %}
+    <meta http-equiv="refresh" content="5">
+{% endif %}
+
+<section class="page-heading compact">
+    <p class="eyebrow">Run #{{ run.id }}</p>
+    <h1>{{ run.status.replace("_", " ") }}</h1>
+    <p>Started {{ run.created_at }}{% if run.finished_at %}; finished {{ run.finished_at }}{% endif %}.</p>
+    {% if worker_active %}
+        <p class="run-note">Background worker is active in this app process.</p>
+    {% elif run.status == "stopping" %}
+        <p class="run-note">Stop has been saved. If another app process owns this scrape, it will pick up the database stop request shortly.</p>
+    {% endif %}
+    {% if is_running %}
+        <form method="post" action="{{ url_for('stop_run', run_id=run.id) }}" class="inline-form">
+            <button type="submit" class="danger-button">{{ "Send stop again" if run.status == "stopping" else "Stop scrape" }}</button>
+        </form>
+        {% if worker_active %}
+            <p class="run-note">This scrape is running as a worker process, so stopping it terminates that process and its detail workers.</p>
+        {% else %}
+            <p class="run-note">If another app process owns this scrape, the database stop request will be picked up between page requests.</p>
+        {% endif %}
+    {% elif can_resume %}
+        <form method="post" action="{{ url_for('resume_run', run_id=run.id) }}" class="inline-form">
+            <button type="submit">Resume scrape</button>
+        </form>
+        <p class="run-note">Resume continues from saved index and detail-link status instead of rebuilding the crawl from scratch.</p>
+    {% endif %}
+</section>
+
+<section class="stats-grid">
+    <div class="stat">
+        <span>Index pages scanned</span>
+        <strong>{{ run.pages_scanned }}</strong>
+    </div>
+    <div class="stat">
+        <span>Detail pages found</span>
+        <strong>{{ run.detail_pages_found }}</strong>
+    </div>
+    <div class="stat">
+        <span>Detail pages scanned</span>
+        <strong>{{ run.detail_pages_scanned }}</strong>
+    </div>
+    <div class="stat">
+        <span>Saved links</span>
+        <strong>{{ run.items_found }}</strong>
+    </div>
+    <div class="stat">
+        <span>Workers</span>
+        <strong>{{ run.worker_count }}</strong>
+    </div>
+    <div class="stat">
+        <span>Robots skips</span>
+        <strong>{{ run.skipped_by_robots }}</strong>
+    </div>
+</section>
+
+<section class="panel help-panel">
+    <h2>What these mean</h2>
+    <dl class="definition-list">
+        <dt>queued</dt>
+        <dd>The run was saved and is waiting for its background worker to start.</dd>
+        <dt>running</dt>
+        <dd>The app is scanning index pages and detail pages.</dd>
+        <dt>stopping</dt>
+        <dd>You asked it to stop. Known worker processes are terminated; unknown workers pick up the saved stop request from the database.</dd>
+        <dt>cancelled</dt>
+        <dd>The run stopped because you cancelled it.</dd>
+        <dt>completed</dt>
+        <dd>The crawl finished without recorded page errors.</dd>
+        <dt>completed_with_errors</dt>
+        <dd>The crawl finished, but one or more pages failed or were blocked.</dd>
+        <dt>failed</dt>
+        <dd>An unexpected app error stopped the run.</dd>
+        <dt>robots skips</dt>
+        <dd>Pages skipped because robots.txt did not allow this crawler to fetch them.</dd>
+    </dl>
+</section>
+
+<section class="panel run-panel">
+    <h2>Crawl settings</h2>
+    <dl class="detail-list">
+        <dt>Start URL</dt>
+        <dd><a href="{{ run.start_url }}" target="_blank" rel="noreferrer">{{ run.start_url }}</a></dd>
+        <dt>Pagination</dt>
+        <dd>{{ run.pagination_template or "None" }}</dd>
+        <dt>Page range</dt>
+        <dd>{{ run.page_start }} to {{ run.page_end }}</dd>
+        <dt>Max details</dt>
+        <dd>{{ run.max_detail_pages }}</dd>
+        <dt>Delay</dt>
+        <dd>{{ run.delay_seconds }} seconds</dd>
+        <dt>Robots.txt</dt>
+        <dd>{{ "Respected" if run.respect_robots else "Ignored" }}</dd>
+        {% if run.stop_requested_at %}
+            <dt>Stop requested</dt>
+            <dd>{{ run.stop_requested_at }}</dd>
+        {% endif %}
+    </dl>
+
+    {% if run.last_index_url or run.last_detail_url %}
+        <h2>Last progress</h2>
+        <dl class="detail-list">
+            {% if run.last_index_url %}
+                <dt>Index page</dt>
+                <dd><a href="{{ run.last_index_url }}" target="_blank" rel="noreferrer">{{ run.last_index_url }}</a></dd>
+            {% endif %}
+            {% if run.last_detail_url %}
+                <dt>Detail page</dt>
+                <dd><a href="{{ run.last_detail_url }}" target="_blank" rel="noreferrer">{{ run.last_detail_url }}</a></dd>
+            {% endif %}
+            <dt>Updated</dt>
+            <dd>{{ run.updated_at }}</dd>
+        </dl>
+    {% endif %}
+
+    {% if run.errors %}
+        <h2>Errors</h2>
+        <pre class="link-box error-text">{{ run.errors }}</pre>
+    {% endif %}
+</section>
+
+{% set failed_count = work_summary.failed_details + work_summary.failed_index_pages %}
+{% set stale_count = work_summary.pending_details + work_summary.processing_details + work_summary.pending_index_pages + work_summary.processing_index_pages %}
+<section class="panel run-panel">
+    <div class="section-title">
+        <h2>Run maintenance</h2>
+        <span>{{ failed_count }} errored, {{ stale_count }} pending/processing</span>
+    </div>
+    <div class="queue-summary">
+        <span>Failed details {{ work_summary.failed_details }}</span>
+        <span>Failed index pages {{ work_summary.failed_index_pages }}</span>
+        <span>Pending details {{ work_summary.pending_details }}</span>
+        <span>Processing details {{ work_summary.processing_details }}</span>
+        <span>Pending index pages {{ work_summary.pending_index_pages }}</span>
+        <span>Processing index pages {{ work_summary.processing_index_pages }}</span>
+    </div>
+    <div class="maintenance-actions">
+        {% if failed_count %}
+            <form method="post" action="{{ url_for('retry_run_errors', run_id=run.id) }}">
+                <button type="submit">Retry errored links</button>
+            </form>
+        {% endif %}
+        {% if stale_count %}
+            <form method="post" action="{{ url_for('cleanup_run', run_id=run.id) }}" onsubmit="return confirm('Mark pending and processing work for this run as cancelled?');">
+                <button type="submit" class="danger-button">Clean up pending work</button>
+            </form>
+        {% endif %}
+        {% if not failed_count and not stale_count %}
+            <p class="empty">No errored or pending work needs attention for this run.</p>
+        {% endif %}
+    </div>
+</section>
+
+<section class="panel run-panel">
+    <div class="section-title">
+        <h2>Discovered detail links</h2>
+        <span>{{ detail_links|length }} shown</span>
+    </div>
+
+    {% if detail_links %}
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Title</th>
+                        <th>Year</th>
+                        <th>Status</th>
+                        <th>Poster</th>
+                        <th>Detail page</th>
+                        <th>Error</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for detail in detail_links %}
+                        <tr>
+                            <td>{{ detail.title or "Untitled" }}</td>
+                            <td>{{ detail.publication_year }}</td>
+                            <td><span class="status">{{ detail.status.replace("_", " ") }}</span></td>
+                            <td>
+                                {% if detail.poster_path %}
+                                    <img class="poster-thumb" src="{{ url_for('poster', filename=detail.poster_path) }}" alt="Poster for {{ detail.title }}">
+                                {% endif %}
+                            </td>
+                            <td><a href="{{ detail.detail_url }}" target="_blank" rel="noreferrer">Open</a></td>
+                            <td>{{ detail.error }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <p class="empty">No detail links discovered yet.</p>
+    {% endif %}
+</section>
+<section class="run-items">
+    <div class="section-title">
+        <h2>Links saved by this run</h2>
+        <a href="{{ url_for('items') }}">Browse all saved links</a>
+    </div>
+
+    {% if items %}
+        <div class="results">
+            {% for item in items %}
+                <article class="result-card">
+                    <div class="result-main">
+                        <div class="result-title">
+                            <a href="{{ url_for('item_detail', item_id=item.id) }}">{{ item.name }}</a>
+                            {% if item.publication_year %}<span>{{ item.publication_year }}</span>{% endif %}
+                            <span>{{ item.link_type }}</span>
+                        </div>
+                        {% if item.description %}
+                            <p>{{ item.description }}</p>
+                        {% endif %}
+                        <div class="meta">
+                            <a href="{{ item.detail_url }}" target="_blank" rel="noreferrer">Detail page</a>
+                            <a href="{{ item.source_url }}" target="_blank" rel="noreferrer">Source page</a>
+                        </div>
+                    </div>
+                    <a class="download-link" href="{{ item.link_url }}" target="_blank" rel="noreferrer">Open link</a>
+                </article>
+            {% endfor %}
+        </div>
+    {% else %}
+        <p class="empty">{% if is_running %}No links saved yet. This page refreshes every 5 seconds while the crawl runs.{% else %}No links were saved by this run.{% endif %}</p>
+    {% endif %}
+</section>
+{% endblock %}

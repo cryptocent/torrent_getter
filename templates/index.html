@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+
+{% block title %}Start Crawl | Torrent Getter{% endblock %}
+
+{% block content %}
+<section class="page-heading">
+    <p class="eyebrow">Open academic and public-domain torrent finder</p>
+    <h1>Scrape a paginated site for magnet and torrent links</h1>
+    <p>Enter the starting page, set the pagination pattern, and the crawler will follow detail links from <code>div.browse-movie-wrap &gt; .browse-movie-bottom &gt; a[href]</code>, then save links found inside <code>div#movie-info</code>. Detail pages run in the background with up to 100 workers, and each detail page is queued once.</p>
+</section>
+
+<section class="panel">
+    <form method="post" action="{{ url_for('start_crawl') }}" class="crawl-form">
+        <label class="field wide">
+            <span>Starting page URL</span>
+            <input type="url" name="start_url" placeholder="https://example.org/archive" required>
+        </label>
+
+        <label class="field wide">
+            <span>Pagination template</span>
+            <input type="text" name="pagination_template" value="?page={page}" placeholder="?page={page}">
+            <small>Use <code>{page}</code> where the page number should go. Full URLs also work.</small>
+        </label>
+
+        <label class="field">
+            <span>First page number</span>
+            <input type="number" name="page_start" value="1" min="1">
+        </label>
+
+        <label class="field">
+            <span>Last page number</span>
+            <input type="number" name="page_end" value="1" min="1">
+        </label>
+
+        <label class="field">
+            <span>Max detail pages</span>
+            <input type="number" name="max_detail_pages" value="100" min="0">
+            <small>Use 0 for no limit.</small>
+        </label>
+
+        <label class="field">
+            <span>Delay seconds</span>
+            <input type="number" name="delay_seconds" value="1" min="0" step="0.25">
+        </label>
+
+        <label class="field">
+            <span>Timeout seconds</span>
+            <input type="number" name="timeout_seconds" value="20" min="1">
+        </label>
+
+        <label class="field">
+            <span>Detail page workers</span>
+            <input type="number" name="worker_count" value="10" min="1" max="100">
+        </label>
+
+        <label class="check-field">
+            <input type="checkbox" name="respect_robots" checked>
+            <span>Respect robots.txt when available</span>
+        </label>
+
+        <div class="form-actions">
+            <button type="submit">Start background crawl</button>
+            <a href="{{ url_for('items') }}">Browse saved data</a>
+        </div>
+    </form>
+</section>
+
+<section class="split">
+    <div>
+        <h2>Recent runs</h2>
+        {% if recent_runs %}
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>When</th>
+                            <th>Status</th>
+                            <th>Workers</th>
+                            <th>Pages</th>
+                            <th>Details</th>
+                            <th>Saved</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for run in recent_runs %}
+                            <tr>
+                                <td>{{ run.created_at }}</td>
+                                <td><span class="status">{{ run.status }}</span></td>
+                                <td>{{ run.worker_count }}</td>
+                                <td>{{ run.pages_scanned }}</td>
+                                <td>{{ run.detail_pages_scanned }}</td>
+                                <td>{{ run.items_found }}</td>
+                                <td><a href="{{ url_for('run_detail', run_id=run.id) }}">View</a></td>
+                            </tr>
+                            {% if run.errors %}
+                                <tr class="error-row">
+                                    <td colspan="7"><pre>{{ run.errors }}</pre></td>
+                                </tr>
+                            {% endif %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <p class="empty">No crawl runs yet.</p>
+        {% endif %}
+    </div>
+
+    <div>
+        <h2>Newest saved links</h2>
+        {% if recent_items %}
+            <ul class="item-list">
+                {% for item in recent_items %}
+                    <li>
+                        <a href="{{ url_for('item_detail', item_id=item.id) }}">{{ item.name }}</a>
+                        <span>{{ item.link_type }}</span>
+                    </li>
+                {% endfor %}
+            </ul>
+        {% else %}
+            <p class="empty">Saved links will show up here.</p>
+        {% endif %}
+    </div>
+</section>
+{% endblock %}

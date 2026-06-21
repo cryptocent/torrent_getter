@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+
+{% block title %}Browse Data | Torrent Getter{% endblock %}
+
+{% block content %}
+<section class="page-heading compact">
+    <h1>Browse saved links</h1>
+    <p>Search by name, year, synopsis, source page, detail page, or magnet/torrent URL.</p>
+</section>
+
+<form method="get" action="{{ url_for('items') }}" class="filter-bar catalog-filters">
+    <input type="hidden" name="display" value="{{ display_mode }}">
+    <label>
+        <span>Search</span>
+        <input type="search" name="q" value="{{ query }}" placeholder="movie, title, synopsis...">
+    </label>
+    <label>
+        <span>Year</span>
+        <select name="year">
+            <option value="" {% if not year %}selected{% endif %}>All years</option>
+            {% for available_year in years %}
+                <option value="{{ available_year }}" {% if year == available_year %}selected{% endif %}>{{ available_year }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>
+        <span>Type</span>
+        <select name="type">
+            <option value="" {% if not link_type %}selected{% endif %}>All links</option>
+            <option value="magnet" {% if link_type == "magnet" %}selected{% endif %}>Magnet</option>
+            <option value="torrent" {% if link_type == "torrent" %}selected{% endif %}>Torrent</option>
+        </select>
+    </label>
+    <label>
+        <span>Sort</span>
+        <select name="sort">
+            {% for value, label in sort_options %}
+                <option value="{{ value }}" {% if sort == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <button type="submit">Filter</button>
+    {% if query or link_type or year or sort != "last_seen_desc" %}
+        <a href="{{ url_for('items', display=display_mode) }}">Clear</a>
+    {% endif %}
+</form>
+
+<div class="browse-toolbar">
+    <div class="result-count">{{ total }} title{{ "" if total == 1 else "s" }}</div>
+    <div class="display-switch" aria-label="Display options">
+        <a href="{{ url_for('items', q=query, year=year, type=link_type, sort=sort, display='list', page=page, per_page=per_page) }}" class="{% if display_mode == 'list' %}active{% endif %}">List</a>
+        <a href="{{ url_for('items', q=query, year=year, type=link_type, sort=sort, display='grid', page=page, per_page=per_page) }}" class="{% if display_mode == 'grid' %}active{% endif %}">Grid</a>
+    </div>
+</div>
+
+{% if items %}
+    <div class="results catalog-results catalog-{{ display_mode }}">
+        {% for item in items %}
+            <article class="result-card catalog-card">
+                <div class="catalog-poster-wrap">
+                    {% if item.poster_path %}
+                        <a href="{{ url_for('item_detail', item_id=item.item_id) }}">
+                            <img class="catalog-poster" src="{{ url_for('poster', filename=item.poster_path) }}" alt="Poster for {{ item.name }}">
+                        </a>
+                    {% else %}
+                        <div class="poster-placeholder">No poster</div>
+                    {% endif %}
+                </div>
+                <div class="result-main">
+                    <div class="result-title">
+                        <a href="{{ url_for('item_detail', item_id=item.item_id) }}">{{ item.name }}</a>
+                        {% if item.publication_year %}<span>{{ item.publication_year }}</span>{% endif %}
+                    </div>
+                    {% if item.synopsis or item.description %}
+                        <p>{{ item.synopsis or item.description }}</p>
+                    {% endif %}
+                    <div class="download-row catalog-downloads">
+                        {% for download in item.downloads %}
+                            <a class="download-link" href="{{ download.link_url }}" target="_blank" rel="noreferrer">Open {{ download.label }}</a>
+                        {% endfor %}
+                    </div>
+                    <div class="meta">
+                        <a href="{{ item.detail_url }}" target="_blank" rel="noreferrer">Detail page</a>
+                        <a href="{{ item.source_url }}" target="_blank" rel="noreferrer">Source page</a>
+                        <span>Last seen {{ item.last_seen_at }}</span>
+                    </div>
+                </div>
+            </article>
+        {% endfor %}
+    </div>
+
+    <nav class="pager" aria-label="Pagination">
+        {% if previous_page %}
+            <a href="{{ url_for('items', q=query, year=year, type=link_type, sort=sort, display=display_mode, page=previous_page, per_page=per_page) }}">Previous</a>
+        {% endif %}
+        <span>Page {{ page }}</span>
+        {% if next_page %}
+            <a href="{{ url_for('items', q=query, year=year, type=link_type, sort=sort, display=display_mode, page=next_page, per_page=per_page) }}">Next</a>
+        {% endif %}
+    </nav>
+{% else %}
+    <p class="empty">No saved links match that filter.</p>
+{% endif %}
+{% endblock %}

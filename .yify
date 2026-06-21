@@ -1,0 +1,5 @@
+#URL https://en.yts-official.biz/browse-movies?
+#order_by=latest
+#DETAIL_LINK_SELECTOR = "div.browse-movie-wrap a[href]"
+#DOWNLOAD_CONTAINER_SELECTOR = "div#movie-info"
+#DETAILS_SELECTOR = "div.hidden-xs"
