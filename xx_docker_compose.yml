@@ -1,0 +1,165 @@
+services:
+
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    container_name: jellyfin
+    user: "1000:1000"
+    environment:
+      - TZ=Australia/Melbourne
+    volumes:
+      - ./config/jellyfin:/config
+      - /mnt/network_share_4TB:/network_share_4TB
+      - /mnt/media:/media
+    ports:
+      - "8096:8096"
+    restart: unless-stopped
+    networks:
+      - media-net
+
+  jellyseerr:
+    image: fallenbagel/jellyseerr:latest
+    container_name: jellyseerr
+    environment:
+      - LOG_LEVEL=info
+      - TZ=Australia/Melbourne
+    volumes:
+      - ./config/jellyseerr:/app/config
+    ports:
+      - "5055:5055"
+    restart: unless-stopped
+    networks:
+      - media-net
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Australia/Melbourne
+    volumes:
+      - ./config/radarr:/config
+      - /mnt/network_share_4TB:/network_share_4TB
+      - /mnt/media:/media
+    ports:
+      - "7878:7878"
+    restart: unless-stopped
+    networks:
+      - media-net
+
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Australia/Melbourne
+    volumes:
+      - ./config/sonarr:/config
+      - /mnt/network_share_4TB:/network_share_4TB
+    - /mnt/media:/media
+    ports:
+      - "8989:8989"
+    restart: unless-stopped
+    networks:
+      - media-net
+
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Australia/Melbourne
+    volumes:
+      - ./config/prowlarr:/config
+    ports:
+      - "9696:9696"
+    restart: unless-stopped
+    networks:
+      - media-net
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Australia/Melbourne
+      - WEBUI_PORT=8080
+      - TORRENTING_PORT=6881
+    volumes:
+      - ./config/qbittorrent:/config
+      - /mnt/network_share_4TB:/network_share_4TB
+      - /mnt/media:/media
+    ports:
+      - "8080:8080"
+      - "6881:6881"
+      - "6881:6881/udp"
+    restart: unless-stopped
+    networks:
+      - media-net
+
+  bazarr:
+    image: lscr.io/linuxserver/bazarr:latest
+    container_name: bazarr
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Australia/Melbourne
+    volumes:
+      - ./config/bazarr:/config
+      - /mnt/network_share_4TB:/network_share_4TB
+      - /mnt/media:/media
+    ports:
+      - "6767:6767"
+    restart: unless-stopped
+    networks:
+      - media-net
+
+  uptime-kuma:
+    image: louislam/uptime-kuma:latest
+    container_name: uptime-kuma
+    volumes:
+      - ./config/uptime-kuma:/app/data
+    ports:
+      - "3001:3001"
+    restart: unless-stopped
+    networks:
+      - media-net
+
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: watchtower
+    environment:
+      - TZ=Australia/Melbourne
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_SCHEDULE=0 0 4 * * *
+      - DOCKER_API_VERSION=1.44
+    volumes:
+       - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+    networks:
+      - media-net
+
+  torrent_getter:
+    build:
+      context: ./torrent_getter
+      dockerfile: Dockerfile
+    container_name: torrent_getter
+    user: "1000:1000"
+    environment:
+      - TZ=Australia/Melbourne
+      - APP_HOST=0.0.0.0
+      - APP_PORT=5000
+      - APP_DEBUG=false
+    volumes:
+      - ./config/torrent_getter:/app/instance
+    ports:
+      - "5010:5000"
+    restart: unless-stopped
+    networks:
+      - media-net
+
+networks:
+  media-net:
+    external: true
