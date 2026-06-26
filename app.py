@@ -39,6 +39,10 @@ SORT_OPTIONS = [
     ("year_asc", "Oldest year"),
 ]
 SORT_KEYS = {value for value, _label in SORT_OPTIONS}
+GRID_COLUMN_COUNT = 3
+GRID_MIN_ROWS = 2
+ITEMS_PER_PAGE_MIN = 5
+ITEMS_PER_PAGE_MAX = 100
 
 
 def create_app(test_config: dict | None = None) -> Flask:
@@ -248,7 +252,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         if display_mode not in {"list", "grid"}:
             display_mode = "list"
         page = max(_int_from_args("page", 1), 1)
-        per_page = min(max(_int_from_args("per_page", 25), 5), 100)
+        per_page = _per_page_for_display(_int_from_args("per_page", 25), display_mode)
         offset = (page - 1) * per_page
 
         with db_connect() as conn:
@@ -340,6 +344,15 @@ def _int_from_args(name: str, default: int) -> int:
         return int(value)
     except ValueError:
         return default
+
+
+def _per_page_for_display(requested: int, display_mode: str) -> int:
+    per_page = min(max(requested, ITEMS_PER_PAGE_MIN), ITEMS_PER_PAGE_MAX)
+    if display_mode != "grid":
+        return per_page
+
+    per_page = max(per_page, GRID_COLUMN_COUNT * GRID_MIN_ROWS)
+    return per_page - (per_page % GRID_COLUMN_COUNT)
 
 
 def _load_env_file(env_path: Path) -> None:

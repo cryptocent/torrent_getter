@@ -1,4 +1,4 @@
-from app import _load_env_file, _server_config_from_env, create_app
+from app import _load_env_file, _per_page_for_display, _server_config_from_env, create_app
 from db import (
     connect,
     create_run,
@@ -28,6 +28,15 @@ def test_server_config_reads_env_file_without_overriding_existing_env(tmp_path, 
     config = _server_config_from_env()
 
     assert config == {"host": "0.0.0.0", "port": 7000, "debug": True}
+
+
+def test_grid_display_uses_page_size_multiple_of_three():
+    assert _per_page_for_display(25, "grid") == 24
+    assert _per_page_for_display(100, "grid") == 99
+    assert _per_page_for_display(5, "grid") == 6
+    assert _per_page_for_display(25, "list") == 25
+
+
 def test_stop_run_marks_non_active_run_stopping(tmp_path):
     database_path = tmp_path / "test.sqlite"
     app = create_app({"TESTING": True, "DATABASE": str(database_path)})
@@ -202,6 +211,7 @@ def test_items_page_displays_catalog_metadata_and_downloads(tmp_path):
     assert b"/posters/poster.jpg" in response.data
     assert b"catalog-grid" in response.data
     assert b'class="active">Grid' in response.data
+    assert b"per_page=24" in response.data
     assert b"Open 1080p magnet" in response.data
     assert b"Open 720p torrent" in response.data
     assert b'target="_blank"' in response.data
