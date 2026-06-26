@@ -7,6 +7,7 @@ from db import (
     enqueue_detail_link,
     enqueue_index_pages,
     get_detail_links_for_run,
+    get_downloads_for_detail_url,
     get_info_hash,
     get_items_for_run,
     link_id_for_url,
@@ -25,7 +26,6 @@ from db import (
     search_items,
 )
 from scraper import DetailLink, ScrapeConfig, ScrapedItem
-
 
 
 def test_get_info_hash_extracts_btih_identity():
@@ -62,9 +62,13 @@ def test_init_db_backfills_existing_item_link_ids(tmp_path):
             run_id, link_url, link_type, name, publication_year, description,
             source_url, detail_url, created_at, last_seen_at
         )
-        VALUES (1, 'magnet:?xt=urn:btih:abc123&tr=udp://tracker/announce', 'magnet',
-                'Old item', '2024', '', 'https://example.org', 'https://example.org/detail',
-                '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')
+        VALUES
+            (1, 'magnet:?xt=urn:btih:abc123&tr=udp://tracker/announce', 'magnet',
+             'Old item', '2024', '', 'https://example.org', 'https://example.org/detail',
+             '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00'),
+            (1, 'magnet:?xt=urn:btih:ABC123&tr=udp://tracker-two/announce', 'magnet',
+             'Duplicate item', '2024', '', 'https://example.org', 'https://example.org/detail',
+             '2026-01-01T00:01:00+00:00', '2026-01-01T00:01:00+00:00')
         """
     )
     raw_conn.commit()
@@ -73,9 +77,15 @@ def test_init_db_backfills_existing_item_link_ids(tmp_path):
     init_db(str(database_path))
 
     with connect(str(database_path)) as conn:
-        row = conn.execute("SELECT link_id FROM items").fetchone()
+        rows = conn.execute("SELECT link_id FROM items").fetchall()
+        downloads = get_downloads_for_detail_url(conn, "https://example.org/detail")
+        indexes = conn.execute("PRAGMA index_list(items)").fetchall()
 
-    assert row["link_id"] == "ABC123"
+    assert [row["link_id"] for row in rows] == ["ABC123"]
+    assert len(downloads) == 1
+    assert downloads[0]["link_id"] == "ABC123"
+    assert any(row["name"] == "idx_items_link_id" and row["unique"] for row in indexes)
+
 
 def test_record_item_updates_existing_link_metadata_without_reassigning_run(tmp_path):
     database_path = tmp_path / "test.sqlite"
@@ -119,7 +129,6 @@ def test_record_item_updates_existing_link_metadata_without_reassigning_run(tmp_
     assert rows[0]["detail_url"] == "https://example.org/detail/one"
     assert len(first_run_items) == 1
     assert second_run_items == []
-
 
 
 
@@ -198,6 +207,7 @@ def test_record_item_keeps_distinct_torrent_urls(tmp_path):
     assert total == 2
     assert {row["link_id"] for row in rows} == {first.link_url, second.link_url}
 
+
 def test_enqueue_detail_link_updates_duplicate_without_counting_discovered(tmp_path):
     database_path = tmp_path / "test.sqlite"
     init_db(str(database_path))
@@ -225,6 +235,8 @@ def test_enqueue_detail_link_updates_duplicate_without_counting_discovered(tmp_p
     assert rows[0]["source_url"] == "https://example.org/archive?page=2"
     assert rows[0]["title"] == "New title"
     assert rows[0]["publication_year"] == "2024"
+
+
 def test_search_catalog_items_groups_downloads_with_detail_metadata(tmp_path):
     database_path = tmp_path / "test.sqlite"
     init_db(str(database_path))

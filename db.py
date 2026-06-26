@@ -135,8 +135,9 @@ def init_db(database_path: str) -> None:
         conn.executescript(SCHEMA)
         _ensure_columns(conn, "crawl_runs", RUN_COLUMN_MIGRATIONS)
         _ensure_columns(conn, "items", ITEM_COLUMN_MIGRATIONS)
-        _ensure_item_indexes(conn)
         _backfill_item_link_ids(conn)
+        _delete_duplicate_items(conn)
+        _ensure_item_indexes(conn)
 
 
 def create_run(conn: sqlite3.Connection, config: ScrapeConfig) -> int:
@@ -613,7 +614,7 @@ def get_downloads_for_detail_url(conn: sqlite3.Connection, detail_url: str) -> l
     return _label_download_rows(
         conn.execute(
             """
-            SELECT id, link_url, link_type, name, description
+            SELECT id, link_url, link_id, link_type, name, description
             FROM items
             WHERE detail_url = ?
             ORDER BY CASE link_type WHEN 'magnet' THEN 0 WHEN 'torrent' THEN 1 ELSE 2 END, id
@@ -735,20 +736,23 @@ def search_catalog_items(
     ).fetchall():
         latest_details.setdefault(row["detail_url"], dict(row))
 
+    download_rows_by_detail_url: dict[str, list[sqlite3.Row]] = {detail_url: [] for detail_url in detail_urls}
+    for row in conn.execute(
+        f"""
+        SELECT detail_url, id, link_url, link_id, link_type, name, description
+        FROM items
+        WHERE detail_url IN ({placeholders})
+        ORDER BY detail_url, CASE link_type WHEN 'magnet' THEN 0 WHEN 'torrent' THEN 1 ELSE 2 END, id
+        """,
+        detail_urls,
+    ).fetchall():
+        download_rows_by_detail_url.setdefault(row["detail_url"], []).append(row)
+
     downloads_by_detail_url: dict[str, list[dict]] = {detail_url: [] for detail_url in detail_urls}
-    for download in _label_download_rows(
-        conn.execute(
-            f"""
-            SELECT detail_url, id, link_url, link_type, name, description
-            FROM items
-            WHERE detail_url IN ({placeholders})
-            ORDER BY detail_url, CASE link_type WHEN 'magnet' THEN 0 WHEN 'torrent' THEN 1 ELSE 2 END, id
-            """,
-            detail_urls,
-        ).fetchall()
-    ):
-        detail_url = download.pop("detail_url")
-        downloads_by_detail_url.setdefault(detail_url, []).append(download)
+    for detail_url, download_rows in download_rows_by_detail_url.items():
+        for download in _label_download_rows(download_rows):
+            download.pop("detail_url", None)
+            downloads_by_detail_url.setdefault(detail_url, []).append(download)
 
     catalog_items: list[dict] = []
     for page_row in page_rows:
@@ -1022,8 +1026,13 @@ def get_item_downloads(conn: sqlite3.Connection, item_id: int) -> list[dict]:
 
 def _label_download_rows(rows) -> list[dict]:
     downloads: list[dict] = []
+    seen_link_ids: set[str] = set()
     for row in rows:
         download = dict(row)
+        link_id = download.get("link_id") or link_id_for_url(download.get("link_url", ""))
+        if link_id in seen_link_ids:
+            continue
+        seen_link_ids.add(link_id)
         resolution = _download_resolution(
             download.get("description", ""),
             download.get("link_url", ""),
@@ -1063,7 +1072,8 @@ def _is_torrent_url(link_url: str) -> bool:
 
 
 def _ensure_item_indexes(conn: sqlite3.Connection) -> None:
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_items_link_id ON items(link_id)")
+    conn.execute("DROP INDEX IF EXISTS idx_items_link_id")
+    conn.execute("CREATE UNIQUE INDEX idx_items_link_id ON items(link_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_items_publication_year ON items(publication_year)")
 
 def _backfill_item_link_ids(conn: sqlite3.Connection) -> None:
@@ -1083,6 +1093,20 @@ def _backfill_item_link_ids(conn: sqlite3.Connection) -> None:
             """,
             (link_id_for_url(row["link_url"]), row["id"]),
         )
+
+def _delete_duplicate_items(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        DELETE FROM items
+        WHERE link_id != ''
+          AND id NOT IN (
+              SELECT MIN(id)
+              FROM items
+              WHERE link_id != ''
+              GROUP BY link_id
+          )
+        """
+    )
 
 def _download_resolution(description: str, link_url: str, name: str) -> str:
     link_text = _extract_link_text(description)
