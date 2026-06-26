@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import sqlite3
 from datetime import datetime, timezone
-from urllib.parse import unquote_plus
+from urllib.parse import parse_qs, unquote_plus, urlparse
 
 from scraper import CrawlStats, DetailLink, ScrapeConfig, ScrapedItem
 
@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id INTEGER,
     link_url TEXT NOT NULL UNIQUE,
+    link_id TEXT NOT NULL DEFAULT '',
     link_type TEXT NOT NULL,
     name TEXT NOT NULL,
     publication_year TEXT NOT NULL DEFAULT '',
@@ -91,7 +92,6 @@ CREATE INDEX IF NOT EXISTS idx_items_name ON items(name);
 CREATE INDEX IF NOT EXISTS idx_items_type ON items(link_type);
 CREATE INDEX IF NOT EXISTS idx_items_last_seen ON items(last_seen_at);
 CREATE INDEX IF NOT EXISTS idx_items_detail_url_last_seen ON items(detail_url, last_seen_at, id);
-CREATE INDEX IF NOT EXISTS idx_items_publication_year ON items(publication_year);
 CREATE INDEX IF NOT EXISTS idx_crawl_index_pages_run_status ON crawl_index_pages(run_id, status, page_order);
 CREATE INDEX IF NOT EXISTS idx_detail_links_run_status ON detail_links(run_id, status, id);
 CREATE INDEX IF NOT EXISTS idx_detail_links_detail_url ON detail_links(detail_url);
@@ -110,6 +110,7 @@ RUN_COLUMN_MIGRATIONS = {
 
 ITEM_COLUMN_MIGRATIONS = {
     "publication_year": "TEXT NOT NULL DEFAULT ''",
+    "link_id": "TEXT NOT NULL DEFAULT ''",
 }
 
 
@@ -134,6 +135,8 @@ def init_db(database_path: str) -> None:
         conn.executescript(SCHEMA)
         _ensure_columns(conn, "crawl_runs", RUN_COLUMN_MIGRATIONS)
         _ensure_columns(conn, "items", ITEM_COLUMN_MIGRATIONS)
+        _ensure_item_indexes(conn)
+        _backfill_item_link_ids(conn)
 
 
 def create_run(conn: sqlite3.Connection, config: ScrapeConfig) -> int:
@@ -547,38 +550,52 @@ def get_detail_links_for_run(conn: sqlite3.Connection, run_id: int, limit: int =
     )
 def record_item(conn: sqlite3.Connection, run_id: int, item: ScrapedItem) -> bool:
     now = _utc_now()
+    link_id = link_id_for_url(item.link_url)
     existing = conn.execute(
         """
         SELECT id
         FROM items
-        WHERE link_url = ?
+        WHERE link_id = ?
+        ORDER BY id
+        LIMIT 1
         """,
-        (item.link_url,),
+        (link_id,),
     ).fetchone()
+    if existing is None:
+        existing = conn.execute(
+            """
+            SELECT id
+            FROM items
+            WHERE link_url = ?
+            """,
+            (item.link_url,),
+        ).fetchone()
     if existing is not None:
         conn.execute(
             """
             UPDATE items
             SET name = ?,
                 publication_year = ?,
+                link_id = ?,
                 last_seen_at = ?
             WHERE id = ?
             """,
-            (item.name, item.publication_year, now, existing["id"]),
+            (item.name, item.publication_year, link_id, now, existing["id"]),
         )
         return False
 
     conn.execute(
         """
         INSERT INTO items (
-            run_id, link_url, link_type, name, publication_year, description,
+            run_id, link_url, link_id, link_type, name, publication_year, description,
             source_url, detail_url, created_at, last_seen_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             run_id,
             item.link_url,
+            link_id,
             item.link_type,
             item.name,
             item.publication_year,
@@ -1018,6 +1035,54 @@ def _label_download_rows(rows) -> list[dict]:
         downloads.append(download)
     return downloads
 
+
+def get_info_hash(magnet_link: str) -> str | None:
+    parsed = urlparse(magnet_link)
+    params = parse_qs(parsed.query)
+    xt_values = params.get("xt")
+    if not xt_values:
+        return None
+
+    xt = xt_values[0]
+    prefix = "urn:btih:"
+    if xt.lower().startswith(prefix):
+        return xt[len(prefix):].upper()
+    return xt.upper()
+
+
+def link_id_for_url(link_url: str) -> str:
+    if _is_torrent_url(link_url):
+        return link_url
+    return get_info_hash(link_url) or link_url
+
+
+def _is_torrent_url(link_url: str) -> bool:
+    parsed = urlparse(link_url)
+    path = parsed.path or link_url
+    return path.lower().endswith(".torrent")
+
+
+def _ensure_item_indexes(conn: sqlite3.Connection) -> None:
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_items_link_id ON items(link_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_items_publication_year ON items(publication_year)")
+
+def _backfill_item_link_ids(conn: sqlite3.Connection) -> None:
+    rows = conn.execute(
+        """
+        SELECT id, link_url
+        FROM items
+        WHERE link_id = ''
+        """
+    ).fetchall()
+    for row in rows:
+        conn.execute(
+            """
+            UPDATE items
+            SET link_id = ?
+            WHERE id = ?
+            """,
+            (link_id_for_url(row["link_url"]), row["id"]),
+        )
 
 def _download_resolution(description: str, link_url: str, name: str) -> str:
     link_text = _extract_link_text(description)

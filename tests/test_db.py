@@ -1,3 +1,5 @@
+import sqlite3
+
 from db import (
     cleanup_incomplete_work,
     connect,
@@ -5,7 +7,9 @@ from db import (
     enqueue_detail_link,
     enqueue_index_pages,
     get_detail_links_for_run,
+    get_info_hash,
     get_items_for_run,
+    link_id_for_url,
     get_next_index_page,
     get_run,
     get_run_queue_summary,
@@ -22,6 +26,56 @@ from db import (
 )
 from scraper import DetailLink, ScrapeConfig, ScrapedItem
 
+
+
+def test_get_info_hash_extracts_btih_identity():
+    magnet = "magnet:?xt=urn:btih:abc123&dn=Name&tr=udp://tracker.example/announce"
+
+    assert get_info_hash(magnet) == "ABC123"
+    assert link_id_for_url(magnet) == "ABC123"
+    assert link_id_for_url("https://example.org/files/movie.torrent") == "https://example.org/files/movie.torrent"
+
+
+def test_init_db_backfills_existing_item_link_ids(tmp_path):
+    database_path = tmp_path / "test.sqlite"
+    raw_conn = sqlite3.connect(database_path)
+    raw_conn.execute(
+        """
+        CREATE TABLE items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER,
+            link_url TEXT NOT NULL UNIQUE,
+            link_type TEXT NOT NULL,
+            name TEXT NOT NULL,
+            publication_year TEXT NOT NULL DEFAULT '',
+            description TEXT NOT NULL DEFAULT '',
+            source_url TEXT NOT NULL,
+            detail_url TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL
+        )
+        """
+    )
+    raw_conn.execute(
+        """
+        INSERT INTO items (
+            run_id, link_url, link_type, name, publication_year, description,
+            source_url, detail_url, created_at, last_seen_at
+        )
+        VALUES (1, 'magnet:?xt=urn:btih:abc123&tr=udp://tracker/announce', 'magnet',
+                'Old item', '2024', '', 'https://example.org', 'https://example.org/detail',
+                '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')
+        """
+    )
+    raw_conn.commit()
+    raw_conn.close()
+
+    init_db(str(database_path))
+
+    with connect(str(database_path)) as conn:
+        row = conn.execute("SELECT link_id FROM items").fetchone()
+
+    assert row["link_id"] == "ABC123"
 
 def test_record_item_updates_existing_link_metadata_without_reassigning_run(tmp_path):
     database_path = tmp_path / "test.sqlite"
@@ -67,6 +121,82 @@ def test_record_item_updates_existing_link_metadata_without_reassigning_run(tmp_
     assert second_run_items == []
 
 
+
+
+def test_record_item_matches_magnet_duplicates_by_info_hash(tmp_path):
+    database_path = tmp_path / "test.sqlite"
+    init_db(str(database_path))
+
+    with connect(str(database_path)) as conn:
+        first_run_id = create_run(conn, ScrapeConfig(start_url="https://example.org/archive"))
+        second_run_id = create_run(conn, ScrapeConfig(start_url="https://example.org/archive?page=2"))
+        original = ScrapedItem(
+            source_url="https://example.org/archive",
+            detail_url="https://example.org/detail/one",
+            link_url="magnet:?xt=urn:btih:abc123&tr=udp://tracker-one/announce",
+            link_type="magnet",
+            name="Original magnet",
+            publication_year="2023",
+            description="Original description",
+        )
+        duplicate = ScrapedItem(
+            source_url="https://example.org/archive?page=2",
+            detail_url="https://example.org/detail/two",
+            link_url="magnet:?xt=urn:btih:ABC123&tr=udp://tracker-two/announce",
+            link_type="magnet",
+            name="Updated magnet",
+            publication_year="2024",
+            description="Duplicate description",
+        )
+
+        assert record_item(conn, first_run_id, original) is True
+        assert record_item(conn, second_run_id, duplicate) is False
+        conn.commit()
+
+        rows, total = search_items(conn)
+        second_run_items = get_items_for_run(conn, second_run_id)
+
+    assert total == 1
+    assert rows[0]["link_id"] == "ABC123"
+    assert rows[0]["link_url"] == original.link_url
+    assert rows[0]["name"] == "Updated magnet"
+    assert rows[0]["publication_year"] == "2024"
+    assert second_run_items == []
+
+
+def test_record_item_keeps_distinct_torrent_urls(tmp_path):
+    database_path = tmp_path / "test.sqlite"
+    init_db(str(database_path))
+
+    with connect(str(database_path)) as conn:
+        run_id = create_run(conn, ScrapeConfig(start_url="https://example.org/archive"))
+        first = ScrapedItem(
+            source_url="https://example.org/archive",
+            detail_url="https://example.org/detail/one",
+            link_url="https://example.org/files/one.torrent",
+            link_type="torrent",
+            name="Torrent one",
+            publication_year="2024",
+            description="First torrent",
+        )
+        second = ScrapedItem(
+            source_url="https://example.org/archive",
+            detail_url="https://example.org/detail/two",
+            link_url="https://example.org/files/two.torrent",
+            link_type="torrent",
+            name="Torrent two",
+            publication_year="2024",
+            description="Second torrent",
+        )
+
+        assert record_item(conn, run_id, first) is True
+        assert record_item(conn, run_id, second) is True
+        conn.commit()
+
+        rows, total = search_items(conn)
+
+    assert total == 2
+    assert {row["link_id"] for row in rows} == {first.link_url, second.link_url}
 
 def test_enqueue_detail_link_updates_duplicate_without_counting_discovered(tmp_path):
     database_path = tmp_path / "test.sqlite"
