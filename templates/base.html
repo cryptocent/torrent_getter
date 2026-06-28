@@ -13,6 +13,7 @@
             <div class="nav-links">
                 <a href="{{ url_for('index') }}">Start crawl</a>
                 <a href="{{ url_for('items') }}">Browse data</a>
+                <a href="{{ url_for('movie_rss') }}" target="_blank">Movie RSS</a>
                 <a href="{{ url_for('latest_run') }}">Latest run</a>
                 <form method="post" action="{{ url_for('stop_all_runs') }}" class="nav-stop-form">
                     <button type="submit" class="danger-button small-button">Stop all</button>

@@ -1,3 +1,5 @@
+from xml.etree import ElementTree
+
 from app import _load_env_file, _per_page_for_display, _server_config_from_env, create_app
 from db import (
     connect,
@@ -215,6 +217,49 @@ def test_items_page_displays_catalog_metadata_and_downloads(tmp_path):
     assert b"Open 1080p magnet" in response.data
     assert b"Open 720p torrent" in response.data
     assert b'target="_blank"' in response.data
+
+
+def test_movie_rss_feed_contains_radarr_compatible_releases(tmp_path):
+    database_path = tmp_path / "test.sqlite"
+    app = create_app({"TESTING": True, "DATABASE": str(database_path)})
+    client = app.test_client()
+
+    with connect(str(database_path)) as conn:
+        run_id = create_run(conn, ScrapeConfig(start_url="https://example.org/archive"))
+        record_item(
+            conn,
+            run_id,
+            ScrapedItem(
+                source_url="https://example.org/archive",
+                detail_url="https://example.org/detail/one",
+                link_url="magnet:?xt=urn:btih:abc123&xl=734003200",
+                link_type="magnet",
+                name="Movie One",
+                publication_year="2024",
+                description="Synopsis\n\nLink text: Download 1080p",
+            ),
+        )
+        conn.commit()
+
+    response = client.get("/rss/movies.xml")
+
+    assert response.status_code == 200
+    assert response.content_type == "application/rss+xml; charset=utf-8"
+    root = ElementTree.fromstring(response.data)
+    entry = root.find("./channel/item")
+    assert entry is not None
+    assert entry.findtext("title") == "Movie One (2024) 1080p"
+    assert entry.findtext("guid") == "ABC123"
+    assert entry.findtext("infohash") == "ABC123"
+    assert entry.findtext("pubDate")
+    assert entry.findtext("link") == "magnet:?xt=urn:btih:abc123&xl=734003200"
+    enclosure = entry.find("enclosure")
+    assert enclosure is not None
+    assert enclosure.attrib == {
+        "url": "magnet:?xt=urn:btih:abc123&xl=734003200",
+        "length": "734003200",
+        "type": "application/x-bittorrent",
+    }
 
 
 def test_retry_errors_requeues_failed_work_and_restarts_run(tmp_path, monkeypatch):

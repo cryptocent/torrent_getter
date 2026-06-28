@@ -624,6 +624,30 @@ def get_downloads_for_detail_url(conn: sqlite3.Connection, detail_url: str) -> l
     )
 
 
+def get_movie_rss_items(conn: sqlite3.Connection, limit: int = 500) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT id, link_url, link_id, link_type, name, publication_year,
+               description, detail_url, created_at
+        FROM items
+        ORDER BY created_at DESC, id DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+
+    feed_items: list[dict] = []
+    for row in rows:
+        item = dict(row)
+        item["resolution"] = _download_resolution(
+            item.get("description", ""),
+            item.get("link_url", ""),
+            item.get("name", ""),
+        )
+        feed_items.append(item)
+    return feed_items
+
+
 def search_catalog_items(
     conn: sqlite3.Connection,
     query: str = "",

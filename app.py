@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
+from email.utils import format_datetime
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+from xml.etree import ElementTree
 
-from flask import Flask, abort, flash, redirect, render_template, request, send_from_directory, url_for
+from flask import Flask, Response, abort, flash, redirect, render_template, request, send_from_directory, url_for
 
 from db import (
     cleanup_incomplete_work,
@@ -14,6 +18,7 @@ from db import (
     get_item_downloads,
     get_latest_run,
     get_detail_links_for_run,
+    get_movie_rss_items,
     get_publication_years,
     get_recent_items,
     get_recent_runs,
@@ -50,6 +55,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     app.config.from_mapping(
         SECRET_KEY="dev",
         DATABASE=str(Path(app.instance_path) / "torrent_getter.sqlite"),
+        RSS_FEED_LIMIT=_int_from_env(("RSS_FEED_LIMIT",), 500),
     )
 
     if test_config:
@@ -299,6 +305,14 @@ def create_app(test_config: dict | None = None) -> Flask:
     def poster(filename: str):
         return send_from_directory(Path(app.instance_path) / "posters", filename)
 
+    @app.get("/rss/movies.xml")
+    def movie_rss():
+        limit = min(max(int(app.config["RSS_FEED_LIMIT"]), 1), 5000)
+        with db_connect() as conn:
+            feed_items = get_movie_rss_items(conn, limit=limit)
+        xml = _build_movie_rss(feed_items, request.url_root)
+        return Response(xml, content_type="application/rss+xml; charset=utf-8")
+
     return app
 
 
@@ -353,6 +367,76 @@ def _per_page_for_display(requested: int, display_mode: str) -> int:
 
     per_page = max(per_page, GRID_COLUMN_COUNT * GRID_MIN_ROWS)
     return per_page - (per_page % GRID_COLUMN_COUNT)
+
+
+def _build_movie_rss(items: list[dict], base_url: str) -> bytes:
+    rss = ElementTree.Element("rss", {"version": "2.0"})
+    channel = ElementTree.SubElement(rss, "channel")
+    ElementTree.SubElement(channel, "title").text = "Torrent Getter Movies"
+    ElementTree.SubElement(channel, "link").text = base_url
+    ElementTree.SubElement(channel, "description").text = "Saved movie magnet and torrent releases"
+
+    dates = [_parse_feed_datetime(item.get("created_at", "")) for item in items]
+    build_date = max(dates, default=datetime.now(timezone.utc))
+    ElementTree.SubElement(channel, "lastBuildDate").text = format_datetime(build_date)
+
+    for item in items:
+        entry = ElementTree.SubElement(channel, "item")
+        ElementTree.SubElement(entry, "title").text = _rss_release_title(item)
+        ElementTree.SubElement(entry, "guid", {"isPermaLink": "false"}).text = (
+            item.get("link_id") or item["link_url"]
+        )
+        ElementTree.SubElement(entry, "pubDate").text = format_datetime(
+            _parse_feed_datetime(item.get("created_at", ""))
+        )
+        ElementTree.SubElement(entry, "link").text = item["link_url"]
+        ElementTree.SubElement(
+            entry,
+            "enclosure",
+            {
+                "url": item["link_url"],
+                "length": str(_magnet_size(item["link_url"])),
+                "type": "application/x-bittorrent",
+            },
+        )
+        if item.get("link_type") == "magnet" and item.get("link_id"):
+            ElementTree.SubElement(entry, "infohash").text = item["link_id"]
+        ElementTree.SubElement(entry, "description").text = item.get("description", "")
+
+    return ElementTree.tostring(rss, encoding="utf-8", xml_declaration=True)
+
+
+def _rss_release_title(item: dict) -> str:
+    parts = [item.get("name", "").strip() or "Untitled"]
+    year = item.get("publication_year", "").strip()
+    if year:
+        parts.append(f"({year})")
+    resolution = item.get("resolution", "").strip()
+    if resolution:
+        parts.append(resolution)
+    return " ".join(parts)
+
+
+def _parse_feed_datetime(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return datetime.now(timezone.utc)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _magnet_size(link_url: str) -> int:
+    if not link_url.lower().startswith("magnet:"):
+        return 0
+    values = parse_qs(urlparse(link_url).query).get("xl", [])
+    if not values:
+        return 0
+    try:
+        return max(int(values[0]), 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _load_env_file(env_path: Path) -> None:
