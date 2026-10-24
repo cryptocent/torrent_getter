@@ -179,3 +179,31 @@ Existing valid /swapfile content is preserved; a suspicious or non-swap
 file at this path causes a safe failure instead of overwriting it.
 No swap is allocated on either Windows SMB share. The swapfile is optional
 and is not created by the normal full-stack installer.
+
+
+## FastChannels geographic region notice (Australia)
+
+FastChannels looks up the server's public IP and may report that it is in AU
+rather than the US. This **does not mean Docker or Jellyfin is broken**.
+Many upstream channel sources are US-only. Disabling the check only
+hides the notice; it does not make geo-restricted streams playable.
+
+To turn off the warning on this host, set `GEO_CHECK_ENABLED=0` in
+`full-stack/.env`, then recreate only FastChannels:
+
+```bash
+cd /opt/apps/torrent_getter/full-stack
+sudo docker compose --env-file .env -f compose.yml up -d --no-deps --force-recreate fastchannels
+sudo docker compose --env-file .env -f compose.yml exec fastchannels printenv GEO_CHECK_ENABLED
+```
+
+Use the public LAN base URL `http://192.168.1.23:5523` in FastChannels
+Admin → Settings. The Docker-internal hostname `fastchannels` is
+appropriate when Jellyfin requests a playlist, but stream URLs included
+in the M3U need to be resolvable by the device actually playing them.
+
+For Australian sources, use built-in source region settings where offered.
+For example, Samsung TV Plus and LG Channels support configurable countries.
+Test individual channels with **Inspect** before building a Jellyfin feed.
+Some sources require subscriptions, US provider accounts, or DRM-capable
+playback and remain unavailable regardless of the geo-check flag.
