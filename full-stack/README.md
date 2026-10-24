@@ -149,3 +149,33 @@ can pause individual I/O calls; reconnecting allows subsequent attempts.
 Do not use `docker compose down -v` unless you intend to remove volumes.
 Back up both your local config and the external media independently.
 Use only content and sources which you are authorised to access.
+
+## Optional: create a persistent 8 GiB swapfile after resizing the VM
+
+The initial Jellyfin VM only had **1.6 GiB** available on a 29 GiB ext4
+root filesystem; Jellyfin itself requires at least 2 GiB free in /config/data.
+Do **not** allocate swap before expanding that local filesystem to roughly
+100 GiB or otherwise making enough free local space.
+
+Once the virtual disk has been expanded (and Ubuntu's LVM/ext4 filesystem
+has been grown), run as the normal Linux user:
+
+```bash
+cd /opt/apps/torrent_getter
+git pull --ff-only origin full-stack-setup
+df -h /
+free -h
+bash full-stack/setup-swap.sh 8
+swapon --show
+```
+
+The optional helper creates **/swapfile** on the local ext4 root filesystem,
+requires at least **12 GiB free** for the 8 GiB file and a 4 GiB reserve,
+restricts its permissions to 0600, enables it immediately, and adds it to
+/etc/fstab for reboot persistence. It also configures
+`vm.swappiness=10` in /etc/sysctl.d/99-media-stack-swap.conf.
+
+Existing valid /swapfile content is preserved; a suspicious or non-swap
+file at this path causes a safe failure instead of overwriting it.
+No swap is allocated on either Windows SMB share. The swapfile is optional
+and is not created by the normal full-stack installer.
