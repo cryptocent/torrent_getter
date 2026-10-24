@@ -1,0 +1,50 @@
+name: Validate media full stack
+
+on:
+  push:
+    branches:
+      - feature/full-stack-setup
+    paths:
+      - "full-stack/**"
+      - ".github/workflows/validate-media-stack.yml"
+  pull_request:
+    paths:
+      - "full-stack/**"
+      - ".github/workflows/validate-media-stack.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate installer syntax
+        run: bash -n full-stack/setup.sh
+      - name: Validate Compose configuration
+        run: |
+          cp full-stack/.env.example full-stack/.env
+          docker compose --project-directory full-stack --env-file full-stack/.env -f full-stack/compose.yml config --quiet
+      - name: Verify expected services
+        run: |
+          python3 - <<'PY'
+          import json
+          import subprocess
+          cmd = [
+              "docker", "compose", "--project-directory", "full-stack",
+              "--env-file", "full-stack/.env", "-f", "full-stack/compose.yml",
+              "config", "--format", "json"
+          ]
+          config = json.loads(subprocess.check_output(cmd, text=True))
+          expected = {
+              "jellyfin", "jellyseerr", "radarr", "sonarr", "prowlarr",
+              "torrent_getter", "iqbit", "qbittorrent", "bazarr",
+              "uptime-kuma", "fastchannels",
+          }
+          assert set(config["services"]) == expected, set(config["services"]) ^ expected
+          assert config["services"]["torrent_getter"]["build"]["context"].endswith("/torrent_getter")
+          assert "http://qbittorrent:8080" == config["services"]["iqbit"]["environment"]["QBIT_HOST"]
+          print(f"Validated {len(expected)} expected services.")
+          PY
