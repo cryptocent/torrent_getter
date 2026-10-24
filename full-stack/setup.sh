@@ -50,7 +50,7 @@ if [[ ! -e "$ENV_FILE" ]]; then
     -e "s/^PGID=.*/PGID=$(id -g)/" \
     "$ENV_FILE"
   notice "Created $ENV_FILE with UID $(id -u), GID $(id -g)."
-  printf 'Review HOST_BIND_IP, MEDIA_ROOT and CONFIG_ROOT before using this stack on a network.\n'
+  printf 'Review HOST_BIND_IP and CONFIG_ROOT. Run setup-network-shares.sh before launching.\n'
 else
   notice "Keeping existing $ENV_FILE unchanged."
 fi
@@ -81,15 +81,27 @@ if [[ "$PUID" != "$(id -u)" || "$PGID" != "$(id -g)" ]]; then
     "$PUID" "$PGID" "$(id -u)" "$(id -g)"
 fi
 
-RAW_MEDIA="$(read_setting MEDIA_ROOT)"
 RAW_CONFIG="$(read_setting CONFIG_ROOT)"
-MEDIA_ROOT="$(normalise_root MEDIA_ROOT "$RAW_MEDIA")"
 CONFIG_ROOT="$(normalise_root CONFIG_ROOT "$RAW_CONFIG")"
-[[ "$MEDIA_ROOT" != "/" && "$CONFIG_ROOT" != "/" ]] || die "Do not use / as a volume root"
-[[ "$MEDIA_ROOT" != "$CONFIG_ROOT" ]] || die "MEDIA_ROOT and CONFIG_ROOT must differ"
-if [[ "$RAW_MEDIA" == /* && ! -d "$MEDIA_ROOT" ]]; then
-  die "MEDIA_ROOT '$MEDIA_ROOT' does not exist. Mount or create the intended disk first; refusing to create an accidental download location."
-fi
+RAW_NETWORK="$(read_setting NETWORK_ROOT)"
+NETWORK_ROOT="$(normalise_root NETWORK_ROOT "${RAW_NETWORK:-/mnt/media-shares}")"
+[[ "$CONFIG_ROOT" != "/" ]] || die "CONFIG_ROOT must not be /"
+[[ "$NETWORK_ROOT" == "/mnt/media-shares" ]] ||
+  die "This SMB setup uses NETWORK_ROOT=/mnt/media-shares. Update .env and run setup-network-shares.sh"
+
+verify_share_setup() {
+  command -v findmnt >/dev/null || die "findmnt (util-linux) is required"
+  [[ -d "$NETWORK_ROOT" ]] || die "Missing $NETWORK_ROOT: run bash full-stack/setup-network-shares.sh"
+  local prop fs share
+  prop="$(findmnt --mountpoint "$NETWORK_ROOT" -n -o PROPAGATION || true)"
+  [[ "$prop" == shared* ]] || die "$NETWORK_ROOT must be a shared mount. Run bash full-stack/setup-network-shares.sh"
+  for share in 4tb 5tb; do
+    fs="$(findmnt --mountpoint "$NETWORK_ROOT/$share" -n -o FSTYPE || true)"
+    [[ "$fs" == autofs || "$fs" == cifs ]] ||
+      die "$NETWORK_ROOT/$share is not automounted; run setup-network-shares.sh first. Do not use empty local folders."
+  done
+}
+
 
 have_compose() { command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; }
 install_packages() {
@@ -141,20 +153,22 @@ if [[ "$CHECK_ONLY" -eq 1 ]]; then
   exit 0
 fi
 
-notice "Preparing persistent directories"
+notice "Checking that both SMB automounts are installed (they may be offline)"
+verify_share_setup
+
+notice "Preparing LOCAL persistent configuration directories"
 mkdir -p \
   "$CONFIG_ROOT/jellyfin/config" "$CONFIG_ROOT/jellyfin/cache" \
   "$CONFIG_ROOT/jellyseerr" "$CONFIG_ROOT/radarr" \
   "$CONFIG_ROOT/sonarr" "$CONFIG_ROOT/prowlarr" \
   "$CONFIG_ROOT/torrent_getter/posters" "$CONFIG_ROOT/qbittorrent" \
   "$CONFIG_ROOT/bazarr" "$CONFIG_ROOT/uptime-kuma" \
-  "$CONFIG_ROOT/fastchannels/data" "$CONFIG_ROOT/fastchannels/adb" \
-  "$MEDIA_ROOT/media/movies" "$MEDIA_ROOT/media/tv" \
-  "$MEDIA_ROOT/torrents/complete" "$MEDIA_ROOT/torrents/incomplete"
+  "$CONFIG_ROOT/fastchannels/data" "$CONFIG_ROOT/fastchannels/adb"
 
-[[ -w "$CONFIG_ROOT/torrent_getter" && -w "$MEDIA_ROOT" ]] ||
-  die "Volume roots must be writable by the installing user."
-printf 'Configuration: %s\nMedia/downloads: %s\n' "$CONFIG_ROOT" "$MEDIA_ROOT"
+[[ -w "$CONFIG_ROOT/torrent_getter" ]] ||
+  die "Configuration directory must be writable by the installing user."
+printf 'LOCAL configuration: %s\nSMB network parent: %s\n' "$CONFIG_ROOT" "$NETWORK_ROOT"
+printf 'NOTE: SMB shares need not be online, but downloads/imports require them.\n'
 
 if [[ "$NO_START" -eq 1 ]]; then
   printf '\nDirectories are ready. To start:\n'
