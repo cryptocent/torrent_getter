@@ -27,6 +27,8 @@ jobs:
           bash -n full-stack/setup.sh
           bash -n full-stack/setup-network-shares.sh
           bash -n full-stack/setup-swap.sh
+          python3 -m py_compile full-stack/configure-fastchannels-au.py
+          python3 full-stack/configure-fastchannels-au.py --help >/dev/null
       - name: Validate Compose configuration
         run: |
           cp full-stack/.env.example full-stack/.env
