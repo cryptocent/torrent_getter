@@ -154,7 +154,9 @@ sudo systemctl enable --now media-stack-propagation.service
 
 for share in 4tb 5tb; do
   unit="$(systemd-escape --path --suffix=automount "$ROOT/$share")"
-  sudo systemctl enable --now "$unit"
+  # fstab-generated units cannot be enabled with systemctl enable; the fstab
+  # generator wires them to boot targets automatically.
+  sudo systemctl start "$unit"
   systemctl is-active --quiet "$unit" || die "Automount unit $unit failed"
 done
 
