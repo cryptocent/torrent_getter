@@ -269,3 +269,9 @@ separate VPN gateway container can be configured in a future revision,
 with FastChannels' port 5523 exposed through that gateway. A VPN does not
 guarantee US-only streams will play, and streaming provider account,
 regional and DRM restrictions still apply.
+
+**VPN playback caveat:** A VPN on FastChannels affects its own HTTP requests, but
+some playback resolvers redirect Jellyfin or the viewer to an external CDN.
+Those downstream client-side requests may bypass the FastChannels VPN and
+still be geo-blocked. Test actual playback from the viewing device; do not
+assume a US IP on the FastChannels container guarantees a playable channel.
