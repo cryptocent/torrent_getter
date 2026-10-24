@@ -207,3 +207,65 @@ For example, Samsung TV Plus and LG Channels support configurable countries.
 Test individual channels with **Inspect** before building a Jellyfin feed.
 Some sources require subscriptions, US provider accounts, or DRM-capable
 playback and remain unavailable regardless of the geo-check flag.
+
+## Australian FastChannels source preset
+
+A conservative source setup is included. It uses FastChannels' own HTTP API
+instead of manipulating its database. It enables **Plex** and **Free Networks**
+and queues fresh scrapes. It does not disable other sources or reset credentials.
+Availability and clear-stream playback must still be verified per channel.
+
+Run from the Linux host after the stack has started:
+
+```bash
+cd /opt/apps/torrent_getter
+git pull --ff-only origin full-stack-setup
+
+# Preview source changes, does not write anything:
+python3 full-stack/configure-fastchannels-au.py
+
+# Enable the starter sources and queue scrapes:
+python3 full-stack/configure-fastchannels-au.py --apply
+
+# Optional trial of Pluto's "Home/Server IP" feed. Australia is not
+# one of Pluto's explicit supported regional feeds in this application:
+python3 full-stack/configure-fastchannels-au.py --apply --try-pluto-local
+```
+
+For an installation whose management UI is not at HOST_BIND_IP:5523, supply
+`--url http://192.168.1.23:5523`. The script requires the server's HTTP
+admin interface to be reachable; do not expose this API directly to the
+Internet. Source scrapes happen asynchronously.
+
+**Provider limits:** The current Samsung scraper offers US, CA, GB, DE,
+FR, ES, IT, KR, IN, AT and CH, but **not AU**. The current LG scraper
+hardcodes US; TCL only lists US and CA. Pluto's named region feeds
+do not include AU, although it has a server-IP option which you may trial.
+The preset does not pretend unsupported AU configurations exist.
+
+After scraping, use the channel **Inspect** action for playback checks
+and build a clean feed at **Admin → Feeds**. In Jellyfin choose an M3U
+tuner and an XMLTV guide using that feed's displayed URLs.
+
+## Optional FastChannels-only VPN
+
+This project does not enable VPN routing by default. For isolation, use a
+VPN client container such as Gluetun and share its network namespace only
+with FastChannels, leaving Jellyfin, Torrent Getter, *arr services and
+qBittorrent on normal Docker networking. Ensure the VPN has a working kill
+switch and that Jellyfin can still reach FastChannels on its internal port.
+
+**Urban VPN limitation:** Urban VPN's official platform list includes
+Windows, macOS, Android, iOS and browser extensions, but not a native Linux
+client. Although Urban states it uses OpenVPN internally, that does **not**
+mean the account provides an exportable `.ovpn` profile or credentials for
+third-party clients. An Urban login or Chrome extension alone cannot be
+entered into a Gluetun container. Ask Urban support whether your account
+provides standard OpenVPN/WireGuard client configuration for Linux or
+routers before attempting this. Do not send VPN credentials in chat.
+
+With a VPN provider that supplies a valid OpenVPN/WireGuard profile, a
+separate VPN gateway container can be configured in a future revision,
+with FastChannels' port 5523 exposed through that gateway. A VPN does not
+guarantee US-only streams will play, and streaming provider account,
+regional and DRM restrictions still apply.
