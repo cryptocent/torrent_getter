@@ -10,3 +10,7 @@ instance
 .codex
 .yify
 .env
+# Keep media, application state, and local deployment secrets out of builds.
+full-stack/.env
+full-stack/config
+full-stack/data
