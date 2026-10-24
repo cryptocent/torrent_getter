@@ -11,7 +11,13 @@ services:
     volumes:
       - "${CONFIG_ROOT:-./config}/jellyfin/config:/config"
       - "${CONFIG_ROOT:-./config}/jellyfin/cache:/cache"
-      - "${MEDIA_ROOT:-./data}/media:/media:ro"
+      - type: bind
+        source: ${NETWORK_ROOT:-/mnt/media-shares}
+        target: /network
+        read_only: true
+        bind:
+          propagation: rslave
+          create_host_path: false
     restart: unless-stopped
     networks: [media]
 
@@ -37,7 +43,12 @@ services:
       - "${HOST_BIND_IP:-127.0.0.1}:7878:7878"
     volumes:
       - "${CONFIG_ROOT:-./config}/radarr:/config"
-      - "${MEDIA_ROOT:-./data}:/data"
+      - type: bind
+        source: ${NETWORK_ROOT:-/mnt/media-shares}
+        target: /network
+        bind:
+          propagation: rslave
+          create_host_path: false
     restart: unless-stopped
     networks: [media]
 
@@ -48,7 +59,12 @@ services:
       - "${HOST_BIND_IP:-127.0.0.1}:8989:8989"
     volumes:
       - "${CONFIG_ROOT:-./config}/sonarr:/config"
-      - "${MEDIA_ROOT:-./data}:/data"
+      - type: bind
+        source: ${NETWORK_ROOT:-/mnt/media-shares}
+        target: /network
+        bind:
+          propagation: rslave
+          create_host_path: false
     restart: unless-stopped
     networks: [media]
 
@@ -104,7 +120,19 @@ services:
       - "${TORRENT_BIND_IP:-0.0.0.0}:${TORRENT_PORT:-6881}:${TORRENT_PORT:-6881}/udp"
     volumes:
       - "${CONFIG_ROOT:-./config}/qbittorrent:/config"
-      - "${MEDIA_ROOT:-./data}:/data"
+      - type: bind
+        source: ${NETWORK_ROOT:-/mnt/media-shares}
+        target: /network
+        bind:
+          propagation: rslave
+          create_host_path: false
+      # Make the image's default /downloads unwritable when shares are absent.
+      - type: bind
+        source: ${NETWORK_ROOT:-/mnt/media-shares}
+        target: /downloads
+        bind:
+          propagation: rslave
+          create_host_path: false
     restart: unless-stopped
     networks: [media]
 
@@ -115,7 +143,12 @@ services:
       - "${HOST_BIND_IP:-127.0.0.1}:6767:6767"
     volumes:
       - "${CONFIG_ROOT:-./config}/bazarr:/config"
-      - "${MEDIA_ROOT:-./data}:/data"
+      - type: bind
+        source: ${NETWORK_ROOT:-/mnt/media-shares}
+        target: /network
+        bind:
+          propagation: rslave
+          create_host_path: false
     restart: unless-stopped
     networks: [media]
 
