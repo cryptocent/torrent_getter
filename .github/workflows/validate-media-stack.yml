@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/full-stack-setup
+      - full-stack-setup
     paths:
       - "full-stack/**"
       - ".github/workflows/validate-media-stack.yml"
@@ -22,7 +23,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Validate installer syntax
-        run: bash -n full-stack/setup.sh
+        run: |
+          bash -n full-stack/setup.sh
+          bash -n full-stack/setup-network-shares.sh
       - name: Validate Compose configuration
         run: |
           cp full-stack/.env.example full-stack/.env
@@ -46,5 +49,14 @@ jobs:
           assert set(config["services"]) == expected, set(config["services"]) ^ expected
           assert config["services"]["torrent_getter"]["build"]["context"].endswith("/torrent_getter")
           assert "http://qbittorrent:8080" == config["services"]["iqbit"]["environment"]["QBIT_HOST"]
-          print(f"Validated {len(expected)} expected services.")
+          for name in ("jellyfin", "radarr", "sonarr", "qbittorrent", "bazarr"):
+              mounts = config["services"][name]["volumes"]
+              network = [m for m in mounts if m["target"] == "/network"]
+              assert len(network) == 1, name
+              assert network[0]["bind"]["propagation"] == "rslave", name
+              assert network[0]["source"] == "/mnt/media-shares", name
+          for name in ("jellyfin", "radarr", "sonarr", "qbittorrent", "bazarr"):
+              assert all("/data" not in m["target"] for m in config["services"][name]["volumes"]), name
+          assert any(m["target"] == "/downloads" for m in config["services"]["qbittorrent"]["volumes"])
+          print(f"Validated {len(expected)} services and offline-safe network mounts.")
           PY
