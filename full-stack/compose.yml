@@ -163,6 +163,8 @@ services:
 
   fastchannels:
     image: ghcr.io/kineticman/fastchannels:latest
+    environment:
+      GEO_CHECK_ENABLED: "${GEO_CHECK_ENABLED:-1}"
     ports:
       - "${HOST_BIND_IP:-127.0.0.1}:5523:5523"
     volumes:
