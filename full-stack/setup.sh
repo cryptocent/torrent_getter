@@ -91,14 +91,42 @@ NETWORK_ROOT="$(normalise_root NETWORK_ROOT "${RAW_NETWORK:-/mnt/media-shares}")
 
 verify_share_setup() {
   command -v findmnt >/dev/null || die "findmnt (util-linux) is required"
-  [[ -d "$NETWORK_ROOT" ]] || die "Missing $NETWORK_ROOT: run bash full-stack/setup-network-shares.sh"
-  local prop fs share
+  command -v systemd-escape >/dev/null || die "systemd-escape is required"
+  command -v systemctl >/dev/null || die "systemctl is required"
+  [[ -d "$NETWORK_ROOT" ]] ||
+    die "Missing $NETWORK_ROOT: first run bash full-stack/setup-network-shares.sh"
+
+  local prop share target unit load_state unit_state
   prop="$(findmnt --mountpoint "$NETWORK_ROOT" -n -o PROPAGATION || true)"
-  [[ "$prop" == shared* ]] || die "$NETWORK_ROOT must be a shared mount. Run bash full-stack/setup-network-shares.sh"
+  [[ "$prop" == shared* ]] ||
+    die "$NETWORK_ROOT is not a shared mount (found: ${prop:-none}). Run bash full-stack/setup-network-shares.sh"
+
+  # A systemd automount unit is the correct offline-ready indicator. A CIFS
+  # filesystem should NOT have to be connected for this validation to pass.
+  # findmnt's FSTYPE alone can be misleading with stacked autofs/CIFS mounts.
   for share in 4tb 5tb; do
-    fs="$(findmnt --mountpoint "$NETWORK_ROOT/$share" -n -o FSTYPE || true)"
-    [[ "$fs" == autofs || "$fs" == cifs ]] ||
-      die "$NETWORK_ROOT/$share is not automounted; run setup-network-shares.sh first. Do not use empty local folders."
+    target="$NETWORK_ROOT/$share"
+    unit="$(systemd-escape --path --suffix=automount "$target")"
+    load_state="$(systemctl show --property=LoadState --value "$unit" 2>/dev/null || true)"
+    unit_state="$(systemctl is-active "$unit" 2>/dev/null || true)"
+
+    if [[ "$load_state" == "loaded" && "$unit_state" != "active" ]]; then
+      notice "$unit is installed but not active. Starting the on-demand trigger (does not connect to Windows)."
+      if command -v sudo >/dev/null 2>&1; then
+        sudo systemctl start "$unit" ||
+          printf 'WARNING: Could not start %s\n' "$unit" >&2
+      fi
+      unit_state="$(systemctl is-active "$unit" 2>/dev/null || true)"
+    fi
+
+    if [[ "$unit_state" != "active" ]]; then
+      printf 'SMB automount check failed for %s (unit: %s, loaded: %s, state: %s)\n' \
+        "$target" "$unit" "${load_state:-unknown}" "${unit_state:-unknown}" >&2
+      printf 'Inspect: systemctl status "%s" --no-pager\n' "$unit" >&2
+      printf 'If missing, run: bash full-stack/setup-network-shares.sh\n' >&2
+      die "Cannot safely expose $target to Docker. No local-disk fallback will be used."
+    fi
+    printf '  %s: automount active; remote share may be online or offline.\n' "$target"
   done
 }
 
@@ -148,13 +176,14 @@ dc() {
 
 notice "Validating Docker Compose configuration"
 dc config --quiet
+
+notice "Checking both SMB automount units (no Windows connection required)"
+verify_share_setup
+
 if [[ "$CHECK_ONLY" -eq 1 ]]; then
   printf 'Validation passed. No services were started.\n'
   exit 0
 fi
-
-notice "Checking that both SMB automounts are installed (they may be offline)"
-verify_share_setup
 
 notice "Preparing LOCAL persistent configuration directories"
 mkdir -p \
