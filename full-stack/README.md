@@ -1,178 +1,151 @@
-# Full media-stack installer (optional)
+# Full media stack: two on-demand Windows shares
 
-This is an optional Docker Compose deployment for the full stack shown in the
-dashboard. It does **not** replace the repository's root compose.yml or modify
-an existing installation.
+The complete Docker Compose stack includes Jellyfin, Jellyseerr, Radarr, Sonarr,
+Prowlarr, Torrent Getter, iQbit, qBittorrent, Bazarr, Uptime Kuma and
+FastChannels. This is separate from Torrent Getter’s original Compose setup.
 
-| Service | Local web URL / port | Purpose |
+The films and TV are stored on the MINI-PC, not the Linux Docker host:
+
+| Windows share | Existing content | Path inside containers |
 | --- | --- | --- |
-| Jellyfin | http://127.0.0.1:8096 | Media server |
-| Jellyseerr | http://127.0.0.1:5055 | Media requests |
-| Radarr | http://127.0.0.1:7878 | Movie library |
-| Sonarr | http://127.0.0.1:8989 | TV library |
-| Prowlarr | http://127.0.0.1:9696 | Indexer manager |
-| Torrent Getter | http://127.0.0.1:5010 | This repository's catalog and RSS |
-| iQbit | http://127.0.0.1:8081 | Alternative qBittorrent web UI |
-| qBittorrent | http://127.0.0.1:8080 | Download client |
-| Bazarr | http://127.0.0.1:6767 | Subtitles |
-| Uptime Kuma | http://127.0.0.1:3001 | Monitoring |
-| FastChannels | http://127.0.0.1:5523/admin/ | Live-TV feed administration |
+| `\\192.168.1.6\4tb` | MOVIES, TV, HER STORY, Pictures | `/network/4tb` |
+| `\\192.168.1.6\5tb` | MOVIES, TV SHOWS, RECORDINGS, temp | `/network/5tb` |
 
-The installer supports modern Debian and Ubuntu Linux, with Docker Engine and
-the Docker Compose v2 plugin. Docker is installed with apt **only** when
-`--install-docker` is specified and a required component is missing.
+## Install on your Jellyfin server
 
-## Quick start
+Run as the `jelly` Linux account, not root:
 
 ```bash
-git clone --branch feature/full-stack-setup https://github.com/cryptocent/torrent_getter.git
-cd torrent_getter
+cd /opt/apps/torrent_getter
+sudo chown -R jelly:jelly /opt/apps/torrent_getter
+git switch full-stack-setup
+git pull --ff-only origin full-stack-setup
+
+# Set up the two SMB shares. Prompts for Windows SMB login.
+bash full-stack/setup-network-shares.sh
+
+# Now deploy the complete stack.
 bash full-stack/setup.sh --install-docker
 ```
 
-On its first run, the installer creates `full-stack/.env` with the current
-user and group IDs, prepares folders, checks Compose syntax, pulls the
-published images, builds Torrent Getter from **this checkout** and starts the
-stack. It does not overwrite existing settings or media.
+The SMB password is requested privately and stored only in
+`/etc/samba/credentials-media-stack` (root-only, mode 0600), not Git or
+the project `.env`. The same Windows user must have permissions on both
+shares. If Windows actually supports SMB guest access, use `--guest`
+instead. The script uses CIFS v3.0.
 
-**If your media already lives on another disk, configure that mount BEFORE
-starting the stack.** For example:
+The setup installs `cifs-utils` if required, safely adds a managed
+block to `/etc/fstab` (with a timestamped backup), creates systemd
+automounts for `/mnt/media-shares/4tb` and `/mnt/media-shares/5tb`,
+and makes their permanent parent a shared mount before Docker starts.
+
+**The MINI-PC may be offline.** systemd does not require either SMB
+connection at boot, and the Docker services bind the always-present
+`/mnt/media-shares` parent with Linux `rslave` propagation. They
+therefore start without the shares and see mounted shares when available
+later. SMB reads/writes will fail or time out while the MINI-PC is offline,
+but that does not prevent the operating system or containers starting.
+
+The backing directories are owned by root and made non-writable for the
+regular application users. This prevents silent local writes into fake
+media directories if a mount unexpectedly disappears. Container
+application configurations remain **local**, under
+`/opt/apps/torrent_getter/full-stack/config` by default.
+
+## First-run library configuration
+
+Use these **exact paths** in the applications:
+
+| Application | Paths |
+| --- | --- |
+| Jellyfin Movies | `/network/4tb/MOVIES` and `/network/5tb/MOVIES` |
+| Jellyfin TV | `/network/4tb/TV` and `/network/5tb/TV SHOWS` |
+| Jellyfin optional library | `/network/4tb/HER STORY` |
+| Radarr movie roots | `/network/4tb/MOVIES` and `/network/5tb/MOVIES` |
+| Sonarr TV roots | `/network/4tb/TV` and `/network/5tb/TV SHOWS` |
+| qBittorrent downloads | `/network/5tb/temp` |
+| Bazarr media | Same `/network/...` paths as Radarr and Sonarr |
+
+In Jellyfin add both movie paths to the Movies library and both TV
+paths to the TV library. Jellyfin's mount is read-only. In Radarr/Sonarr,
+choose which of the two roots each title belongs to.
+
+**qBittorrent requires a first-run change:** configure its *Default Save
+Path* and its temporary download directory under `/network/5tb/temp`
+before adding downloads. The container's default `/downloads` points
+to the non-writable network **parent** deliberately, preventing an
+unconfigured qBittorrent from writing downloads to the Docker host disk.
+Only write into an actual SMB share subdirectory.
+
+Radarr, Sonarr, qBittorrent and Bazarr all use the same `/network`
+mapping, so they do not need remote path mappings. Imports across shares
+can require copying instead of hardlinking. If the Windows system
+disappears during a library scan, avoid automatic deletion workflows
+which interpret an inaccessible share as deleted media.
+
+The scripts do not create folders, move files or perform write tests on
+the Windows computer. If you want separate download directories under
+`5tb\temp`, create them in Windows first and select them in qBittorrent.
+
+## Link the applications
+
+1. qBittorrent: get its temporary admin password via container logs,
+   then change it. Configure downloads on the network share.
+2. Radarr/Sonarr: connect the download client `qbittorrent:8080`,
+   using qBittorrent credentials and relevant download categories.
+3. Prowlarr: add `http://radarr:7878` and `http://sonarr:8989`
+   with API keys.
+4. Torrent Getter: create a permitted crawl. Add RSS indexer
+   `http://torrent_getter:5000/rss/movies.xml` to Radarr.
+5. Bazarr: connect to `http://radarr:7878` and `http://sonarr:8989`.
+6. Jellyseerr: link to `http://jellyfin:8096`, Radarr and Sonarr.
+7. iQbit: accessible on port 8081; proxies to `qbittorrent:8080`.
+8. FastChannels: use port 5523 under `/admin/` to configure feeds
+   and copy the resulting M3U/XMLTV URLs into Jellyfin Live TV.
+9. Uptime Kuma: create your admin and add monitors for the services
+   and optionally the networked Windows computer.
+
+## Web ports
+
+| App | Port | App | Port |
+| --- | ---: | --- | ---: |
+| Jellyfin | 8096 | Jellyseerr | 5055 |
+| Radarr | 7878 | Sonarr | 8989 |
+| Prowlarr | 9696 | Torrent Getter | 5010 |
+| iQbit | 8081 | qBittorrent | 8080 |
+| Bazarr | 6767 | Uptime Kuma | 3001 |
+| FastChannels | 5523 | | |
+
+Set `HOST_BIND_IP` in `full-stack/.env` to your **Linux server's**
+actual LAN IP for LAN access; `192.168.1.6` is the Windows storage
+computer, not the Linux server. Default localhost binding is intentional.
+Do not expose management web interfaces directly to the Internet.
+The torrent peer port is 6881/TCP and UDP unless changed.
+
+## Check and maintain
 
 ```bash
-# After cloning, create your local settings first:
-cp full-stack/.env.example full-stack/.env
-sed -i "s/^PUID=.*/PUID=$(id -u)/; s/^PGID=.*/PGID=$(id -g)/" full-stack/.env
-nano full-stack/.env
-bash full-stack/setup.sh --install-docker
-```
+# Local mount state without requiring Windows to be online:
+findmnt --mountpoint /mnt/media-shares -o TARGET,PROPAGATION
+systemctl status "$(systemd-escape --path --suffix=automount /mnt/media-shares/4tb)"
+systemctl status "$(systemd-escape --path --suffix=automount /mnt/media-shares/5tb)"
 
-The two most important settings are:
+# These two commands trigger an SMB connection; run when Windows is online:
+ls -la /mnt/media-shares/4tb/MOVIES
+ls -la "/mnt/media-shares/5tb/TV SHOWS"
 
-```dotenv
-MEDIA_ROOT=/mnt/media
-CONFIG_ROOT=/srv/media-stack/config
-HOST_BIND_IP=127.0.0.1
-```
-
-An absolute `MEDIA_ROOT` must already exist, preventing a misspelled or
-unmounted disk path from silently redirecting downloads onto the system disk.
-By default, `MEDIA_ROOT=./data` and `CONFIG_ROOT=./config` are directories
-under `full-stack/`. These directories are gitignored. Be sure the chosen
-user has permission to write to both volume roots.
-
-To allow access from another device on the **trusted LAN**, change
-`HOST_BIND_IP` to the server's actual LAN IP address. Do not use an
-Internet-facing IP. All web UIs are bound to localhost by default; the
-separate qBittorrent peer-connection TCP/UDP port (6881) binds to all
-interfaces by default. Restrict it with `TORRENT_BIND_IP` if desired.
-Protect the server with a firewall and a private network or VPN. Torrent
-Getter and FastChannels administration should not be exposed publicly.
-
-## First-run wiring
-
-1. **qBittorrent**: open port 8080. Obtain the initial `admin` password
-   with the log command below and set a strong permanent password immediately.
-   Configure completed downloads as `/data/torrents/complete` and incomplete
-   downloads as `/data/torrents/incomplete`.
-2. **Radarr**: set movie root to `/data/media/movies`. Add download client
-   qBittorrent with host `qbittorrent`, port `8080` and the qBittorrent
-   credentials. Apply the same download category on both sides if using one.
-3. **Sonarr**: set TV root to `/data/media/tv` and connect to
-   `qbittorrent:8080` with its own category.
-4. **Prowlarr**: add Radarr at `http://radarr:7878` and Sonarr at
-   `http://sonarr:8989`, supplying their API keys. Configure only lawful
-   and permitted indexer sources.
-5. **Torrent Getter**: in Radarr's *Settings > Indexers* add a Torrent RSS
-   Feed at `http://torrent_getter:5000/rss/movies.xml`. Enable RSS sync
-   and *Allow Zero Size* as described in the project README. The feed is
-   empty until this application has saved permitted releases.
-6. **Bazarr**: configure Sonarr `http://sonarr:8989` and Radarr
-   `http://radarr:7878` with their API keys. All three share the same
-   `/data` mount for consistent path mapping.
-7. **Jellyfin**: configure media folders `/media/movies` and
-   `/media/tv`, mounted read-only from the shared host library.
-8. **Jellyseerr**: link to `http://jellyfin:8096`, and then to
-   `http://radarr:7878` and `http://sonarr:8989` with their API keys.
-9. **iQbit**: the standalone interface proxies to
-   `http://qbittorrent:8080`. Use your normal qBittorrent credentials.
-10. **FastChannels**: visit port 5523 at `/admin/`. Set its server URL
-    to the LAN address devices can reach, create a feed and add its
-    M3U/XMLTV endpoints to Jellyfin's live TV tuner/guide settings.
-    Use the actual feed URLs displayed by FastChannels.
-11. **Uptime Kuma**: create the administrator account, then add HTTP
-    monitors for the other applications.
-
-Docker service names above resolve on the Compose `media` network.
-Hostnames such as `radarr` and `torrent_getter` are for **container-to-container**
-links only; use the server IP from a desktop or phone.
-
-## Operations
-
-Run from the repository root:
-
-```bash
-# Preview installation without starting containers
+# Compose validation and container status:
 bash full-stack/setup.sh --check
-
-# Prepare host directories but do not launch
-bash full-stack/setup.sh --no-start
-
-# Update images and restart, keeping all persistent volumes
-docker compose --env-file full-stack/.env -f full-stack/compose.yml pull \
-  jellyfin jellyseerr radarr sonarr prowlarr iqbit qbittorrent bazarr uptime-kuma fastchannels
-docker compose --env-file full-stack/.env -f full-stack/compose.yml up -d --build
-
-# Status, qBittorrent initial password and logs
 docker compose --env-file full-stack/.env -f full-stack/compose.yml ps
 docker compose --env-file full-stack/.env -f full-stack/compose.yml logs qbittorrent
-docker compose --env-file full-stack/.env -f full-stack/compose.yml logs -f torrent_getter
 
-# Stop containers without deleting application files
-docker compose --env-file full-stack/.env -f full-stack/compose.yml down
+# Recreate after updating mounts, without deleting local app settings:
+docker compose --env-file full-stack/.env -f full-stack/compose.yml up -d --force-recreate --build
 ```
 
-If Docker requires elevated access, prefix the `docker` commands with
-`sudo`. Run setup.sh as a **regular user**, never with sudo. Do not use
-`down -v` unless you intentionally want to delete named volumes.
-
-## Storage, permissions and migration
-
-The stack uses one consistent shared data mount in Radarr, Sonarr,
-qBittorrent and Bazarr:
-
-```text
-MEDIA_ROOT/
-  media/
-    movies/
-    tv/
-  torrents/
-    complete/
-    incomplete/
-```
-
-This permits normal hardlinks/atomic moves on a single filesystem. If the
-source files span different filesystems or network shares, hardlink
-importing might not work; use copies or adapt paths appropriately.
-`CONFIG_ROOT` stores persistent application settings, the Torrent Getter
-SQLite database and posters, Jellyfin cache, Uptime Kuma data and
-FastChannels state/ADB keys. Back up **both** roots before upgrades.
-
-This installer does not move or migrate any existing application data and
-does not delete existing containers. If default ports are occupied, Compose
-will fail with a binding error; stop/reconfigure the conflicting service
-rather than deleting its data.
-
-Images are updated **manually**, not through Watchtower. Avoid unattended
-container upgrades on a stack that handles persistent media and databases.
-Pinned version tags or image digests are recommended for production.
-
-Use this stack only with media and sources that you are authorised to access
-and download. Application installation does not grant usage rights.
-
-## Sources
-
-- [Torrent Getter](https://github.com/cryptocent/torrent_getter)
-- [Jellyfin](https://jellyfin.org/docs/general/installation/container/)
-- [iQbit standalone WebUI](https://github.com/ntoporcov/iQbit)
-- [FastChannels container](https://github.com/kineticman/FastChannels)
-- [LinuxServer qBittorrent](https://docs.linuxserver.io/images/docker-qbittorrent/)
+The remote shares are **optional during startup**, not guaranteed to
+complete every file operation while disconnected. SMB timeout handling
+can pause individual I/O calls; reconnecting allows subsequent attempts.
+Do not use `docker compose down -v` unless you intend to remove volumes.
+Back up both your local config and the external media independently.
+Use only content and sources which you are authorised to access.
