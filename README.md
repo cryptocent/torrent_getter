@@ -90,3 +90,7 @@ SQLite data is stored at `instance/torrent_getter.sqlite` by default.
 The latest crawl can be opened from the **Latest run** link. Each run stores status, start/finish times, worker count, progress counters, the last index/detail page touched, errors, discovered detail-link statuses, poster filenames, synopsis text, and the links saved by that run.
 
 Only crawl sites and files you are allowed to access and redistribute.
+
+## Optional complete media stack
+
+A separate, repeatable Docker Compose setup for Jellyfin, Jellyseerr, Radarr, Sonarr, Prowlarr, Torrent Getter, iQbit, qBittorrent, Bazarr, Uptime Kuma and FastChannels is available in [full-stack/README.md](full-stack/README.md). From this repository, run `bash full-stack/setup.sh --install-docker` after reviewing its storage and network settings. The original single-app `compose.yml` remains unchanged.
