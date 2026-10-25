@@ -410,3 +410,4 @@ def test_existing_saved_synopsis_hides_redundant_heading_on_catalog_and_detail(t
         assert response.status_code == 200
         assert b"A roller derby team faces unexpected trouble." in response.data
         assert b"Skate to Hell Synopsis" not in response.data
+        assert b"<h2>Synopsis</h2>" not in response.data
