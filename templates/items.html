@@ -72,7 +72,7 @@
                         {% if item.publication_year %}<span>{{ item.publication_year }}</span>{% endif %}
                     </div>
                     {% if item.synopsis or item.description %}
-                        <p>{{ item.synopsis or item.description }}</p>
+                        <p>{{ (item.synopsis | clean_synopsis(item.name)) or item.description }}</p>
                     {% endif %}
                     <div class="download-row catalog-downloads">
                         {% for download in item.downloads %}
