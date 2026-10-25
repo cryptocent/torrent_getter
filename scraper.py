@@ -320,7 +320,7 @@ def clean_synopsis(synopsis: str | None, title: str = "") -> str:
 
     candidate_titles = [title.strip()]
     # Listing names can include a trailing publication year not present in the heading.
-    without_year = re.sub(r"\\s*\\(\\d{4}\\)\\s*$", "", title.strip())
+    without_year = re.sub(r"\s*\(\d{4}\)\s*$", "", title.strip())
     if without_year and without_year not in candidate_titles:
         candidate_titles.append(without_year)
 
@@ -328,7 +328,7 @@ def clean_synopsis(synopsis: str | None, title: str = "") -> str:
         if not candidate:
             continue
         heading = re.compile(
-            r"^\\s*" + re.escape(candidate) + r"\\s+Synopsis\\b\\s*[:–-]?\\s*",
+            r"^\s*" + re.escape(candidate) + r"\s+Synopsis\b\s*[:–-]?\s*",
             flags=re.IGNORECASE,
         )
         match = heading.match(text)
@@ -337,9 +337,9 @@ def clean_synopsis(synopsis: str | None, title: str = "") -> str:
 
     # For legacy entries with a slightly different saved title, strip only a
     # standalone opening line. Never remove arbitrary prose later in the text.
-    first_line, separator, remainder = text.partition("\\n")
+    first_line, separator, remainder = text.partition("\n")
     if separator and re.fullmatch(
-        r"(?:Synopsis|.{1,140}\\s+Synopsis)\\s*[:–-]?\\s*",
+        r"(?:Synopsis|.{1,140}\s+Synopsis)\s*[:–-]?\s*",
         first_line.strip(),
         flags=re.IGNORECASE,
     ):
