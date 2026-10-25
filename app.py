@@ -333,7 +333,13 @@ def create_app(test_config: dict | None = None) -> Flask:
             )
             years = get_publication_years(conn)
 
-        next_page = page + 1 if offset + per_page < total else None
+        total_pages = max(1, (total + per_page - 1) // per_page)
+        if page > total_pages:
+            return redirect(url_for(
+                "items", q=query, type=link_type, year=year, sort=sort,
+                display=display_mode, per_page=per_page, page=total_pages,
+            ))
+        next_page = page + 1 if page < total_pages else None
         previous_page = page - 1 if page > 1 else None
         return render_template(
             "items.html",
@@ -350,6 +356,8 @@ def create_app(test_config: dict | None = None) -> Flask:
             per_page=per_page,
             next_page=next_page,
             previous_page=previous_page,
+            total_pages=total_pages,
+            page_links=_pagination_links(page, total_pages),
         )
 
     @app.get("/items/<int:item_id>")
@@ -418,6 +426,21 @@ def _int_from_args(name: str, default: int) -> int:
         return int(value)
     except ValueError:
         return default
+
+
+def _pagination_links(page: int, total_pages: int, radius: int = 2) -> list[int | None]:
+    """Short page range with first/last pages and ellipses for large catalogs."""
+    if total_pages <= 1:
+        return []
+    selected = {1, total_pages}
+    selected.update(range(max(1, page - radius), min(total_pages, page + radius) + 1))
+    ordered = sorted(selected)
+    links: list[int | None] = []
+    for number in ordered:
+        if links and isinstance(links[-1], int) and number - links[-1] > 1:
+            links.append(None)
+        links.append(number)
+    return links
 
 
 def _per_page_for_display(requested: int, display_mode: str) -> int:
