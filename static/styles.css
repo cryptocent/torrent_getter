@@ -451,6 +451,16 @@ th {
     display: flex;
     flex-wrap: wrap;
     gap: 10px;
+    align-items: center;
+}
+
+.send-form {
+    margin: 0;
+}
+
+.send-form .download-link {
+    font: inherit;
+    cursor: pointer;
 }
 .detail-panel {
     max-width: 900px;
