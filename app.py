@@ -34,7 +34,7 @@ from db import (
 )
 from jobs import CrawlJobManager
 from qbit_client import QBitSubmissionError, submit_to_qbittorrent
-from scraper import ScrapeConfig, validate_http_url
+from scraper import ScrapeConfig, clean_synopsis, validate_http_url
 
 
 SORT_OPTIONS = [
@@ -74,6 +74,11 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     def db_connect():
         return connect(app.config["DATABASE"])
+
+    @app.template_filter("clean_synopsis")
+    def clean_synopsis_filter(value: str | None, title: str = "") -> str:
+        # Presentation-time normalization also fixes items already saved in SQLite.
+        return clean_synopsis(value, title)
 
     def qbit_enabled() -> bool:
         return bool(
