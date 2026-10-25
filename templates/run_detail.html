@@ -222,7 +222,17 @@
                             <a href="{{ item.source_url }}" target="_blank" rel="noreferrer">Source page</a>
                         </div>
                     </div>
-                    <a class="download-link" href="{{ item.link_url }}" target="_blank" rel="noreferrer">Open link</a>
+                    <div class="download-row">
+                        {% if qbit_enabled %}
+                            <form method="post" action="{{ url_for('send_download', download_id=item.id) }}" class="send-form">
+                                <input type="hidden" name="csrf_token" value="{{ qbit_csrf_token }}">
+                                <button type="submit" class="download-link">Send to qBittorrent</button>
+                            </form>
+                            <a class="download-link" href="{{ item.link_url }}" target="_blank" rel="noreferrer">Source</a>
+                        {% else %}
+                            <a class="download-link" href="{{ item.link_url }}" target="_blank" rel="noreferrer">Open link</a>
+                        {% endif %}
+                    </div>
                 </article>
             {% endfor %}
         </div>
