@@ -169,9 +169,9 @@ def submit_to_qbittorrent(
         except ValueError:
             result = None
         if isinstance(result, dict):
-            failed = result.get("failed", 0)
-            successful = result.get("added", result.get("success", 0))
-            pending = result.get("pending", 0)
+            failed = result.get("failure_count", 0)
+            successful = result.get("success_count", 0)
+            pending = result.get("pending_count", 0)
             if isinstance(failed, int) and failed and not successful and not pending:
                 raise QBitSubmissionError("qBittorrent reported that the torrent addition failed.")
     except requests.RequestException as exc:
