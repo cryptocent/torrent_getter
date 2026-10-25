@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -310,7 +312,43 @@ def find_detail_links(html: str, page_url: str) -> list[DetailLink]:
 
 
 
-def extract_detail_metadata(html: str, detail_url: str) -> DetailMetadata:
+def clean_synopsis(synopsis: str | None, title: str = "") -> str:
+    """Remove a scraped film-title + 'Synopsis' heading, preserving the description."""
+    text = (synopsis or "").strip()
+    if not text:
+        return ""
+
+    candidate_titles = [title.strip()]
+    # Listing names can include a trailing publication year not present in the heading.
+    without_year = re.sub(r"\\s*\\(\\d{4}\\)\\s*$", "", title.strip())
+    if without_year and without_year not in candidate_titles:
+        candidate_titles.append(without_year)
+
+    for candidate in candidate_titles:
+        if not candidate:
+            continue
+        heading = re.compile(
+            r"^\\s*" + re.escape(candidate) + r"\\s+Synopsis\\b\\s*[:–-]?\\s*",
+            flags=re.IGNORECASE,
+        )
+        match = heading.match(text)
+        if match:
+            return text[match.end():].strip()
+
+    # For legacy entries with a slightly different saved title, strip only a
+    # standalone opening line. Never remove arbitrary prose later in the text.
+    first_line, separator, remainder = text.partition("\\n")
+    if separator and re.fullmatch(
+        r"(?:Synopsis|.{1,140}\\s+Synopsis)\\s*[:–-]?\\s*",
+        first_line.strip(),
+        flags=re.IGNORECASE,
+    ):
+        return remainder.strip()
+
+    return text
+
+
+def extract_detail_metadata(html: str, detail_url: str, title: str = "") -> DetailMetadata:
     soup = BeautifulSoup(html, "html.parser")
     synopsis_node = soup.select_one(SYNOPSIS_SELECTOR)
     poster_node = soup.select_one(POSTER_IMAGE_SELECTOR)
@@ -323,7 +361,7 @@ def extract_detail_metadata(html: str, detail_url: str) -> DetailMetadata:
             or ""
         ).strip()
     return DetailMetadata(
-        synopsis=synopsis_node.get_text("\n", strip=True) if synopsis_node is not None else "",
+        synopsis=clean_synopsis(synopsis_node.get_text("\n", strip=True), title) if synopsis_node is not None else "",
         poster_url=urljoin(detail_url, raw_poster_url) if raw_poster_url else "",
     )
 
@@ -410,7 +448,7 @@ def crawl_detail_page(
     if not result.html:
         return DetailResult(detail_url=task.detail_url, source_url=task.source_url)
 
-    metadata = extract_detail_metadata(result.html, task.detail_url)
+    metadata = extract_detail_metadata(result.html, task.detail_url, title=task.title)
     items = tuple(
         extract_download_items(
             result.html,
