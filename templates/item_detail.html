@@ -15,7 +15,7 @@
 
     {% if item.synopsis %}
         <h2>Synopsis</h2>
-        <p class="preserve">{{ item.synopsis }}</p>
+        <p class="preserve">{{ item.synopsis | clean_synopsis(item.name) }}</p>
     {% endif %}
 
     {% if item.description %}
