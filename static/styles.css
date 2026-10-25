@@ -424,9 +424,48 @@ th {
 .pager {
     align-items: center;
     display: flex;
-    gap: 14px;
+    gap: 8px;
     justify-content: center;
-    margin-top: 20px;
+    margin-top: 24px;
+    flex-wrap: wrap;
+}
+
+.numbered-pager > a,
+.numbered-pager > .page-current,
+.numbered-pager > .page-ellipsis {
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
+    min-width: 38px;
+    min-height: 38px;
+    padding: 7px 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    text-decoration: none;
+}
+
+.numbered-pager > a:hover,
+.numbered-pager > a:focus-visible {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.numbered-pager > .page-current {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: #fff;
+    font-weight: 700;
+}
+
+.numbered-pager > .page-ellipsis {
+    border: none;
+}
+
+.page-summary {
+    color: var(--muted);
+    text-align: center;
+    font-size: 0.9rem;
+    margin-top: 8px;
 }
 
 
