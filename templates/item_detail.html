@@ -14,8 +14,7 @@
     {% endif %}
 
     {% if item.synopsis %}
-        <h2>Synopsis</h2>
-        <p class="preserve">{{ item.synopsis }}</p>
+        <p class="preserve">{{ item.synopsis | clean_synopsis(item.name) }}</p>
     {% endif %}
 
     {% if item.description %}
@@ -26,7 +25,15 @@
     <h2>Downloads</h2>
     <div class="download-row">
         {% for download in downloads %}
-            <a class="button-link" href="{{ download.link_url }}" target="_blank" rel="noreferrer">Open {{ download.label }}</a>
+            {% if qbit_enabled %}
+                <form method="post" action="{{ url_for('send_download', download_id=download.id) }}" class="send-form">
+                    <input type="hidden" name="csrf_token" value="{{ qbit_csrf_token }}">
+                    <button type="submit">Send {{ download.label }} to qBittorrent</button>
+                </form>
+                <a class="download-link" href="{{ download.link_url }}" target="_blank" rel="noreferrer">Source</a>
+            {% else %}
+                <a class="button-link" href="{{ download.link_url }}" target="_blank" rel="noreferrer">Open {{ download.label }}</a>
+            {% endif %>
         {% else %}
             <a class="button-link" href="{{ item.link_url }}" target="_blank" rel="noreferrer">Open {{ item.link_type }} link</a>
         {% endfor %}

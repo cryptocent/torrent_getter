@@ -33,6 +33,61 @@ RSS_FEED_LIMIT=500
 
 Use `127.0.0.1` for local-only access, or `0.0.0.0` to listen on the LAN. Open the Flask URL shown in the terminal, usually `http://127.0.0.1:5000` for local-only or `http://<your-computer-ip>:5000` from another device on the network.
 
+## Send saved links directly to qBittorrent
+
+When configured, the **Browse data**, **item detail**, and **crawl result** pages offer a
+**Send to qBittorrent** button beside each saved magnet or HTTP(S) `.torrent` link.
+The original source link remains available.
+
+- Magnet links go directly to qBittorrent's Web API.
+- HTTP(S) `.torrent` links are fetched by Torrent Getter and uploaded as torrent
+  **files**. This works around hosts that serve genuine torrents with an incorrect
+  `text/html` Content-Type and qBittorrent URL-import failures.
+- A successful request is acknowledged, and errors appear in the Torrent Getter UI.
+- The existing qBittorrent `MOVIES` category determines the completed-download
+  location. No save-path override is sent, so its configured local incomplete
+  folder and final category location are retained.
+- The action only submits a download when the user presses the send button.
+
+Configure the following **container environment variables** through a private
+Compose env file or another secrets mechanism. Do not commit real passwords to
+the repository or expose this feature on an unauthenticated public website.
+
+```dotenv
+APP_SECRET_KEY=<long-random-secret>
+QBIT_URL=http://qbittorrent:8080
+QBIT_USERNAME=admin
+QBIT_PASSWORD=<permanent-qbittorrent-webui-password>
+QBIT_MOVIES_CATEGORY=MOVIES
+QBIT_TORRENT_ALLOWED_HOSTS=files.example.org,other.example.org
+```
+
+Generate `APP_SECRET_KEY` with `python3 -c 'import secrets; print(secrets.token_hex(32))'`.
+The Docker services must be on a shared network so the `qbittorrent` hostname
+resolves. Set a **permanent** qBittorrent WebUI password before enabling this
+feature. If the app is not using Docker, set QBIT_URL to the appropriate
+reachable LAN hostname and port.
+
+`QBIT_TORRENT_ALLOWED_HOSTS` is a comma-separated list of trusted, public
+HTTPS torrent source **hostnames**, without paths or schemes. Fetches reject
+unlisted domains and redirects to unlisted domains, require public DNS
+addresses, cap downloaded torrent metadata at 10 MB, and allow up to three
+redirects. These safeguards reduce risks from fetching URL content controlled
+by external websites. They are not a substitute for restricting app access
+to trusted users and networks.
+
+If `QBIT_URL`, `QBIT_PASSWORD`, or a non-default `APP_SECRET_KEY` is absent,
+the send buttons remain hidden and the send endpoint is disabled. Existing
+browse and RSS functionality continue unchanged.
+
+### Browse Data pagination
+
+The Browse Data catalog displays numbered pages at the bottom, with
+**First**, **Previous**, **Next**, and **Last** navigation as appropriate.
+The selected page is highlighted, long page ranges collapse with ellipses,
+and search, year/type filters, sorting, list/grid view, and page size persist
+when navigating.
+
 ## Radarr RSS Feed
 
 The saved movie releases are available at:

@@ -1,4 +1,4 @@
-from scraper import build_index_urls, extract_detail_metadata, extract_download_items, find_detail_links
+from scraper import build_index_urls, clean_synopsis, extract_detail_metadata, extract_download_items, find_detail_links
 
 
 def test_build_index_urls_adds_start_and_paginated_pages():
@@ -109,3 +109,35 @@ def test_extract_detail_metadata_reads_synopsis_and_poster_url():
 
     assert metadata.poster_url == "https://example.org/images/poster.jpg"
     assert metadata.synopsis == "First line.\nSecond line."
+
+def test_extract_detail_metadata_removes_title_synopsis_heading():
+    html = """
+    <div id="synopsis"><h2>Skate to Hell Synopsis</h2>
+    <p>A roller derby team faces unexpected trouble.</p></div>
+    """
+    metadata = extract_detail_metadata(
+        html, "https://example.org/detail/skate-to-hell", title="Skate to Hell"
+    )
+    assert metadata.synopsis == "A roller derby team faces unexpected trouble."
+
+
+def test_clean_synopsis_removes_heading_for_saved_entries():
+    assert clean_synopsis(
+        "Skate to Hell Synopsis\n\nA roller derby team faces unexpected trouble.",
+        "Skate to Hell",
+    ) == "A roller derby team faces unexpected trouble."
+    assert clean_synopsis(
+        "Skate to Hell Synopsis: A roller derby team faces unexpected trouble.",
+        "Skate to Hell (2026)",
+    ) == "A roller derby team faces unexpected trouble."
+    assert clean_synopsis(
+        "Skate to Hell Synopsis\nA roller derby team faces unexpected trouble.",
+        "Different saved title",
+    ) == "A roller derby team faces unexpected trouble."
+    assert clean_synopsis(
+        "A description that mentions Skate to Hell Synopsis later in the plot.",
+        "Skate to Hell",
+    ) == "A description that mentions Skate to Hell Synopsis later in the plot."
+    assert clean_synopsis(
+        "Synopsis\nA standalone description",
+    ) == "A standalone description"

@@ -320,3 +320,94 @@ def test_cleanup_marks_pending_work_cancelled(tmp_path):
         detail = get_detail_links_for_run(conn, run_id)[0]
     assert run["status"] == "cancelled"
     assert detail["status"] == "cancelled"
+
+def test_numbered_pagination_window():
+    from app import _pagination_links
+
+    assert _pagination_links(1, 1) == []
+    assert _pagination_links(1, 3) == [1, 2, 3]
+    assert _pagination_links(1, 30) == [1, 2, 3, None, 30]
+    assert _pagination_links(15, 30) == [1, None, 13, 14, 15, 16, 17, None, 30]
+    assert _pagination_links(30, 30) == [1, None, 28, 29, 30]
+
+
+def test_browse_page_number_links_preserve_filters(tmp_path):
+    database_path = tmp_path / "test.sqlite"
+    app = create_app({"TESTING": True, "DATABASE": str(database_path)})
+    client = app.test_client()
+
+    with connect(str(database_path)) as conn:
+        run_id = create_run(conn, ScrapeConfig(start_url="https://example.org/archive"))
+        for index in range(12):
+            record_item(
+                conn,
+                run_id,
+                ScrapedItem(
+                    source_url="https://example.org/archive",
+                    detail_url=f"https://example.org/detail/{index}",
+                    link_url=f"magnet:?xt=urn:btih:{index:040x}",
+                    link_type="magnet",
+                    name=f"Movie {index}",
+                    publication_year="2024",
+                ),
+            )
+        conn.commit()
+
+    result = client.get(
+        "/items?year=2024&type=magnet&sort=title_asc&display=grid&per_page=6&page=1"
+    )
+    html = result.get_data(as_text=True)
+    assert result.status_code == 200
+    assert 'aria-label="Browse result pages"' in html
+    assert 'aria-current="page">1</span>' in html
+    assert "Page 1 of 2" in html
+    assert "page=2" in html
+    assert "year=2024" in html
+    assert "type=magnet" in html
+    assert "display=grid" in html
+    assert "sort=title_asc" in html
+
+    out_of_range = client.get("/items?display=grid&per_page=6&page=999")
+    assert out_of_range.status_code == 302
+    assert "page=2" in out_of_range.headers["Location"]
+
+
+def test_existing_saved_synopsis_hides_redundant_heading_on_catalog_and_detail(tmp_path):
+    database_path = tmp_path / "test.sqlite"
+    app = create_app({"TESTING": True, "DATABASE": str(database_path)})
+    client = app.test_client()
+
+    with connect(str(database_path)) as conn:
+        run_id = create_run(conn, ScrapeConfig(start_url="https://example.org/archive"))
+        detail_url = "https://example.org/detail/skate-to-hell"
+        enqueue_detail_link(
+            conn, run_id, "https://example.org/archive",
+            DetailLink(url=detail_url, title="Skate to Hell", publication_year="2026"),
+        )
+        detail = get_detail_links_for_run(conn, run_id)[0]
+        mark_detail_link_completed(
+            conn,
+            detail["id"],
+            synopsis="Skate to Hell Synopsis\nA roller derby team faces unexpected trouble.",
+        )
+        record_item(
+            conn,
+            run_id,
+            ScrapedItem(
+                source_url="https://example.org/archive",
+                detail_url=detail_url,
+                link_url="magnet:?xt=urn:btih:0123456789abcdef",
+                link_type="magnet",
+                name="Skate to Hell",
+                publication_year="2026",
+            ),
+        )
+        item_id = conn.execute("SELECT id FROM items ORDER BY id DESC LIMIT 1").fetchone()[0]
+        conn.commit()
+
+    for url in ("/items", f"/items/{item_id}"):
+        response = client.get(url)
+        assert response.status_code == 200
+        assert b"A roller derby team faces unexpected trouble." in response.data
+        assert b"Skate to Hell Synopsis" not in response.data
+        assert b"<h2>Synopsis</h2>" not in response.data

@@ -72,11 +72,19 @@
                         {% if item.publication_year %}<span>{{ item.publication_year }}</span>{% endif %}
                     </div>
                     {% if item.synopsis or item.description %}
-                        <p>{{ item.synopsis or item.description }}</p>
+                        <p>{{ (item.synopsis | clean_synopsis(item.name)) or item.description }}</p>
                     {% endif %}
                     <div class="download-row catalog-downloads">
                         {% for download in item.downloads %}
-                            <a class="download-link" href="{{ download.link_url }}" target="_blank" rel="noreferrer">Open {{ download.label }}</a>
+                            {% if qbit_enabled %}
+                                <form method="post" action="{{ url_for('send_download', download_id=download.id) }}" class="send-form">
+                                    <input type="hidden" name="csrf_token" value="{{ qbit_csrf_token }}">
+                                    <button type="submit" class="download-link">Send {{ download.label }} to qBittorrent</button>
+                                </form>
+                                <a class="download-link" href="{{ download.link_url }}" target="_blank" rel="noreferrer">Source</a>
+                            {% else %}
+                                <a class="download-link" href="{{ download.link_url }}" target="_blank" rel="noreferrer">Open {{ download.label }}</a>
+                            {% endif %}
                         {% endfor %}
                     </div>
                     <div class="meta">
@@ -89,15 +97,28 @@
         {% endfor %}
     </div>
 
-    <nav class="pager" aria-label="Pagination">
+    {% if total_pages > 1 %}
+    <nav class="pager numbered-pager" aria-label="Browse result pages">
         {% if previous_page %}
-            <a href="{{ url_for('items', q=query, year=year, type=link_type, sort=sort, display=display_mode, page=previous_page, per_page=per_page) }}">Previous</a>
+            <a href="{{ url_for('items', q=query, year=year, type=link_type, sort=sort, display=display_mode, page=1, per_page=per_page) }}" aria-label="First page">First</a>
+            <a href="{{ url_for('items', q=query, year=year, type=link_type, sort=sort, display=display_mode, page=previous_page, per_page=per_page) }}" rel="prev">Previous</a>
         {% endif %}
-        <span>Page {{ page }}</span>
+        {% for number in page_links %}
+            {% if number is none %}
+                <span class="page-ellipsis" aria-hidden="true">…</span>
+            {% elif number == page %}
+                <span class="page-current" aria-current="page">{{ number }}</span>
+            {% else %}
+                <a href="{{ url_for('items', q=query, year=year, type=link_type, sort=sort, display=display_mode, page=number, per_page=per_page) }}" aria-label="Page {{ number }}">{{ number }}</a>
+            {% endif %}
+        {% endfor %}
         {% if next_page %}
-            <a href="{{ url_for('items', q=query, year=year, type=link_type, sort=sort, display=display_mode, page=next_page, per_page=per_page) }}">Next</a>
+            <a href="{{ url_for('items', q=query, year=year, type=link_type, sort=sort, display=display_mode, page=next_page, per_page=per_page) }}" rel="next">Next</a>
+            <a href="{{ url_for('items', q=query, year=year, type=link_type, sort=sort, display=display_mode, page=total_pages, per_page=per_page) }}" aria-label="Last page">Last</a>
         {% endif %}
     </nav>
+    <p class="page-summary">Page {{ page }} of {{ total_pages }} · {{ total }} titles</p>
+    {% endif %>
 {% else %}
     <p class="empty">No saved links match that filter.</p>
 {% endif %}

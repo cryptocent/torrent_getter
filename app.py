@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import os
+import secrets
 from datetime import datetime, timezone
 from email.utils import format_datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from xml.etree import ElementTree
 
-from flask import Flask, Response, abort, flash, redirect, render_template, request, send_from_directory, url_for
+from flask import Flask, Response, abort, flash, redirect, render_template, request, send_from_directory, session, url_for
 
 from db import (
     cleanup_incomplete_work,
@@ -32,7 +33,8 @@ from db import (
     search_catalog_items,
 )
 from jobs import CrawlJobManager
-from scraper import ScrapeConfig, validate_http_url
+from qbit_client import QBitSubmissionError, submit_to_qbittorrent
+from scraper import ScrapeConfig, clean_synopsis, validate_http_url
 
 
 SORT_OPTIONS = [
@@ -53,7 +55,12 @@ ITEMS_PER_PAGE_MAX = 100
 def create_app(test_config: dict | None = None) -> Flask:
     app = Flask(__name__, instance_relative_config=True)
     app.config.from_mapping(
-        SECRET_KEY="dev",
+        SECRET_KEY=_env_value(("APP_SECRET_KEY",), "dev"),
+        QBIT_URL=_env_value(("QBIT_URL",), ""),
+        QBIT_USERNAME=_env_value(("QBIT_USERNAME",), "admin"),
+        QBIT_PASSWORD=_env_value(("QBIT_PASSWORD",), ""),
+        QBIT_MOVIES_CATEGORY=_env_value(("QBIT_MOVIES_CATEGORY",), "MOVIES"),
+        QBIT_TORRENT_ALLOWED_HOSTS=_env_value(("QBIT_TORRENT_ALLOWED_HOSTS",), ""),
         DATABASE=str(Path(app.instance_path) / "torrent_getter.sqlite"),
         RSS_FEED_LIMIT=_int_from_env(("RSS_FEED_LIMIT",), 500),
     )
@@ -67,6 +74,64 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     def db_connect():
         return connect(app.config["DATABASE"])
+
+    @app.template_filter("clean_synopsis")
+    def clean_synopsis_filter(value: str | None, title: str = "") -> str:
+        # Presentation-time normalization also fixes items already saved in SQLite.
+        return clean_synopsis(value, title)
+
+    def qbit_enabled() -> bool:
+        return bool(
+            app.config["QBIT_URL"]
+            and app.config["QBIT_PASSWORD"]
+            and app.config["SECRET_KEY"] != "dev"
+        )
+
+    @app.context_processor
+    def expose_qbit_form():
+        if not qbit_enabled():
+            return {"qbit_enabled": False}
+        if "qbit_send_csrf" not in session:
+            session["qbit_send_csrf"] = secrets.token_urlsafe(32)
+        return {
+            "qbit_enabled": True,
+            "qbit_csrf_token": session["qbit_send_csrf"],
+        }
+
+    @app.post("/downloads/<int:download_id>/send")
+    def send_download(download_id: int):
+        if not qbit_enabled():
+            abort(503)
+        provided = request.form.get("csrf_token", "")
+        expected = session.get("qbit_send_csrf", "")
+        if not provided or not expected or not secrets.compare_digest(provided, expected):
+            abort(403)
+
+        with db_connect() as conn:
+            item = get_item(conn, download_id)
+        if item is None:
+            abort(404)
+
+        try:
+            allowed_hosts = {
+                host.strip().rstrip(".").lower()
+                for host in app.config["QBIT_TORRENT_ALLOWED_HOSTS"].split(",")
+                if host.strip()
+            }
+            submit_to_qbittorrent(
+                link_url=item["link_url"],
+                link_type=item["link_type"],
+                base_url=app.config["QBIT_URL"],
+                username=app.config["QBIT_USERNAME"],
+                password=app.config["QBIT_PASSWORD"],
+                category=app.config["QBIT_MOVIES_CATEGORY"],
+                allowed_hosts=allowed_hosts,
+            )
+            flash("Torrent submitted to qBittorrent. Check its category for the download.", "success")
+        except QBitSubmissionError as exc:
+            flash(str(exc), "error")
+
+        return redirect(url_for("item_detail", item_id=download_id))
 
     @app.get("/")
     def index():
@@ -273,7 +338,13 @@ def create_app(test_config: dict | None = None) -> Flask:
             )
             years = get_publication_years(conn)
 
-        next_page = page + 1 if offset + per_page < total else None
+        total_pages = max(1, (total + per_page - 1) // per_page)
+        if page > total_pages:
+            return redirect(url_for(
+                "items", q=query, type=link_type, year=year, sort=sort,
+                display=display_mode, per_page=per_page, page=total_pages,
+            ))
+        next_page = page + 1 if page < total_pages else None
         previous_page = page - 1 if page > 1 else None
         return render_template(
             "items.html",
@@ -290,6 +361,8 @@ def create_app(test_config: dict | None = None) -> Flask:
             per_page=per_page,
             next_page=next_page,
             previous_page=previous_page,
+            total_pages=total_pages,
+            page_links=_pagination_links(page, total_pages),
         )
 
     @app.get("/items/<int:item_id>")
@@ -358,6 +431,21 @@ def _int_from_args(name: str, default: int) -> int:
         return int(value)
     except ValueError:
         return default
+
+
+def _pagination_links(page: int, total_pages: int, radius: int = 2) -> list[int | None]:
+    """Short page range with first/last pages and ellipses for large catalogs."""
+    if total_pages <= 1:
+        return []
+    selected = {1, total_pages}
+    selected.update(range(max(1, page - radius), min(total_pages, page + radius) + 1))
+    ordered = sorted(selected)
+    links: list[int | None] = []
+    for number in ordered:
+        if links and isinstance(links[-1], int) and number - links[-1] > 1:
+            links.append(None)
+        links.append(number)
+    return links
 
 
 def _per_page_for_display(requested: int, display_mode: str) -> int:
