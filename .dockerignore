@@ -10,3 +10,8 @@ instance
 .codex
 .yify
 .env
+
+# This repository also houses a deployed media stack. Docker images for
+# Torrent Getter must not copy Compose files, persisted media, or containers'
+# cache/configuration into the application build context.
+full-stack/
