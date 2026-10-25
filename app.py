@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import os
+import secrets
 from datetime import datetime, timezone
 from email.utils import format_datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from xml.etree import ElementTree
 
-from flask import Flask, Response, abort, flash, redirect, render_template, request, send_from_directory, url_for
+from flask import Flask, Response, abort, flash, redirect, render_template, request, send_from_directory, session, url_for
 
 from db import (
     cleanup_incomplete_work,
@@ -32,6 +33,7 @@ from db import (
     search_catalog_items,
 )
 from jobs import CrawlJobManager
+from qbit_client import QBitSubmissionError, submit_to_qbittorrent
 from scraper import ScrapeConfig, validate_http_url
 
 
@@ -53,7 +55,12 @@ ITEMS_PER_PAGE_MAX = 100
 def create_app(test_config: dict | None = None) -> Flask:
     app = Flask(__name__, instance_relative_config=True)
     app.config.from_mapping(
-        SECRET_KEY="dev",
+        SECRET_KEY=_env_value(("APP_SECRET_KEY",), "dev"),
+        QBIT_URL=_env_value(("QBIT_URL",), ""),
+        QBIT_USERNAME=_env_value(("QBIT_USERNAME",), "admin"),
+        QBIT_PASSWORD=_env_value(("QBIT_PASSWORD",), ""),
+        QBIT_MOVIES_CATEGORY=_env_value(("QBIT_MOVIES_CATEGORY",), "MOVIES"),
+        QBIT_TORRENT_ALLOWED_HOSTS=_env_value(("QBIT_TORRENT_ALLOWED_HOSTS",), ""),
         DATABASE=str(Path(app.instance_path) / "torrent_getter.sqlite"),
         RSS_FEED_LIMIT=_int_from_env(("RSS_FEED_LIMIT",), 500),
     )
@@ -67,6 +74,59 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     def db_connect():
         return connect(app.config["DATABASE"])
+
+    def qbit_enabled() -> bool:
+        return bool(
+            app.config["QBIT_URL"]
+            and app.config["QBIT_PASSWORD"]
+            and app.config["SECRET_KEY"] != "dev"
+        )
+
+    @app.context_processor
+    def expose_qbit_form():
+        if not qbit_enabled():
+            return {"qbit_enabled": False}
+        if "qbit_send_csrf" not in session:
+            session["qbit_send_csrf"] = secrets.token_urlsafe(32)
+        return {
+            "qbit_enabled": True,
+            "qbit_csrf_token": session["qbit_send_csrf"],
+        }
+
+    @app.post("/downloads/<int:download_id>/send")
+    def send_download(download_id: int):
+        if not qbit_enabled():
+            abort(503)
+        provided = request.form.get("csrf_token", "")
+        expected = session.get("qbit_send_csrf", "")
+        if not provided or not expected or not secrets.compare_digest(provided, expected):
+            abort(403)
+
+        with db_connect() as conn:
+            item = get_item(conn, download_id)
+        if item is None:
+            abort(404)
+
+        try:
+            allowed_hosts = {
+                host.strip().rstrip(".").lower()
+                for host in app.config["QBIT_TORRENT_ALLOWED_HOSTS"].split(",")
+                if host.strip()
+            }
+            submit_to_qbittorrent(
+                link_url=item["link_url"],
+                link_type=item["link_type"],
+                base_url=app.config["QBIT_URL"],
+                username=app.config["QBIT_USERNAME"],
+                password=app.config["QBIT_PASSWORD"],
+                category=app.config["QBIT_MOVIES_CATEGORY"],
+                allowed_hosts=allowed_hosts,
+            )
+            flash("Torrent submitted to qBittorrent. Check its category for the download.", "success")
+        except QBitSubmissionError as exc:
+            flash(str(exc), "error")
+
+        return redirect(url_for("item_detail", item_id=download_id))
 
     @app.get("/")
     def index():
