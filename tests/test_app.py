@@ -370,3 +370,43 @@ def test_browse_page_number_links_preserve_filters(tmp_path):
     out_of_range = client.get("/items?display=grid&per_page=6&page=999")
     assert out_of_range.status_code == 302
     assert "page=2" in out_of_range.headers["Location"]
+
+
+def test_existing_saved_synopsis_hides_redundant_heading_on_catalog_and_detail(tmp_path):
+    database_path = tmp_path / "test.sqlite"
+    app = create_app({"TESTING": True, "DATABASE": str(database_path)})
+    client = app.test_client()
+
+    with connect(str(database_path)) as conn:
+        run_id = create_run(conn, ScrapeConfig(start_url="https://example.org/archive"))
+        detail_url = "https://example.org/detail/skate-to-hell"
+        enqueue_detail_link(
+            conn, run_id, "https://example.org/archive",
+            DetailLink(url=detail_url, title="Skate to Hell", publication_year="2026"),
+        )
+        detail = get_detail_links_for_run(conn, run_id)[0]
+        mark_detail_link_completed(
+            conn,
+            detail["id"],
+            synopsis="Skate to Hell Synopsis\nA roller derby team faces unexpected trouble.",
+        )
+        record_item(
+            conn,
+            run_id,
+            ScrapedItem(
+                source_url="https://example.org/archive",
+                detail_url=detail_url,
+                link_url="magnet:?xt=urn:btih:0123456789abcdef",
+                link_type="magnet",
+                name="Skate to Hell",
+                publication_year="2026",
+            ),
+        )
+        item_id = conn.execute("SELECT id FROM items ORDER BY id DESC LIMIT 1").fetchone()[0]
+        conn.commit()
+
+    for url in ("/items", f"/items/{item_id}"):
+        response = client.get(url)
+        assert response.status_code == 200
+        assert b"A roller derby team faces unexpected trouble." in response.data
+        assert b"Skate to Hell Synopsis" not in response.data
