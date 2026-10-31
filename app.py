@@ -5,7 +5,7 @@ import secrets
 from datetime import datetime, timezone
 from email.utils import format_datetime
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, urlsplit
 from xml.etree import ElementTree
 
 from flask import Flask, Response, abort, flash, redirect, render_template, request, send_from_directory, session, url_for
@@ -50,6 +50,27 @@ GRID_COLUMN_COUNT = 3
 GRID_MIN_ROWS = 2
 ITEMS_PER_PAGE_MIN = 5
 ITEMS_PER_PAGE_MAX = 100
+
+
+def _safe_items_return(value: str) -> str | None:
+    """Limit post-submit redirects to this application's browse/detail pages."""
+    if (
+        not value
+        or len(value) > 2048
+        or not value.startswith("/")
+        or value.startswith("//")
+        or "\\" in value
+        or any(ord(character) < 32 for character in value)
+    ):
+        return None
+    parsed = urlsplit(value)
+    if parsed.scheme or parsed.netloc or parsed.fragment:
+        return None
+    if parsed.path == "/items" or (
+        parsed.path.startswith("/items/") and parsed.path[len("/items/"):].isdigit()
+    ):
+        return value
+    return None
 
 
 def create_app(test_config: dict | None = None) -> Flask:
@@ -129,9 +150,10 @@ def create_app(test_config: dict | None = None) -> Flask:
             )
             flash("Torrent submitted to qBittorrent. Check its category for the download.", "success")
         except QBitSubmissionError as exc:
+            app.logger.warning("qBittorrent submission failed for saved link %s: %s", download_id, exc)
             flash(str(exc), "error")
 
-        return redirect(url_for("item_detail", item_id=download_id))
+        return redirect(_safe_items_return(request.form.get("return_to", "")) or url_for("items"))
 
     @app.get("/")
     def index():
