@@ -6,7 +6,7 @@ import pytest
 
 import qbit_client
 from qbit_client import QBitSubmissionError, fetch_torrent_file, submit_to_qbittorrent
-from app import create_app
+from app import _safe_items_return, create_app
 from db import connect, create_run, record_item
 from scraper import ScrapeConfig, ScrapedItem
 
@@ -191,3 +191,89 @@ def test_send_disabled_without_configured_secret(tmp_path):
     })
     client = app.test_client()
     assert client.post("/downloads/1/send").status_code == 503
+
+
+def test_original_links_and_send_actions_both_render(tmp_path):
+    database = str(tmp_path / "test.sqlite")
+    app = create_app({
+        "TESTING": True,
+        "DATABASE": database,
+        "SECRET_KEY": "secure-test-key",
+        "QBIT_URL": "http://qbittorrent:8080",
+        "QBIT_PASSWORD": "secret",
+    })
+    client = app.test_client()
+    with connect(database) as conn:
+        run_id = create_run(conn, ScrapeConfig(start_url="https://example.org"))
+        for link_type, link_url in (
+            ("magnet", "magnet:?xt=urn:btih:abc123"),
+            ("torrent", "https://files.example.com/example.torrent"),
+        ):
+            record_item(conn, run_id, ScrapedItem(
+                source_url="https://example.org",
+                detail_url="https://example.org/title",
+                link_url=link_url,
+                link_type=link_type,
+                name="Example",
+            ))
+        item_id = conn.execute("SELECT id FROM items WHERE link_type = 'magnet'").fetchone()[0]
+        conn.commit()
+
+    for path in ("/items", f"/items/{item_id}"):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert b"Open magnet" in response.data
+        assert b"Download torrent" in response.data
+        assert b"Send magnet to qBittorrent" in response.data
+        assert b"Send torrent to qBittorrent" in response.data
+        assert b'href="magnet:?xt=urn:btih:abc123"' in response.data
+        assert b'href="https://files.example.com/example.torrent"' in response.data
+        assert b'name="return_to"' in response.data
+
+
+def test_qbittorrent_error_is_shown_on_original_browse_page(tmp_path, monkeypatch):
+    database = str(tmp_path / "test.sqlite")
+    app = create_app({
+        "TESTING": True, "DATABASE": database,
+        "SECRET_KEY": "secure-test-key",
+        "QBIT_URL": "http://qbittorrent:8080",
+        "QBIT_PASSWORD": "secret",
+    })
+    client = app.test_client()
+    with connect(database) as conn:
+        run_id = create_run(conn, ScrapeConfig(start_url="https://example.org"))
+        record_item(conn, run_id, ScrapedItem(
+            source_url="https://example.org",
+            detail_url="https://example.org/title",
+            link_url="magnet:?xt=urn:btih:abc123",
+            link_type="magnet", name="Example",
+        ))
+        item_id = conn.execute("SELECT id FROM items LIMIT 1").fetchone()[0]
+        conn.commit()
+
+    client.get("/items")
+    with client.session_transaction() as sess:
+        token = sess["qbit_send_csrf"]
+
+    def failed_submission(**_kwargs):
+        raise QBitSubmissionError("qBittorrent authentication failed; verify its credentials.")
+
+    monkeypatch.setattr("app.submit_to_qbittorrent", failed_submission)
+    response = client.post(
+        f"/downloads/{item_id}/send",
+        data={"csrf_token": token, "return_to": "/items?display=grid&sort=title_asc"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert b"qBittorrent authentication failed" in response.data
+    assert b"Browse saved links" in response.data
+
+
+def test_send_redirect_targets_must_be_local_browse_or_detail_pages():
+    assert _safe_items_return("/items?page=2") == "/items?page=2"
+    assert _safe_items_return("/items/2399") == "/items/2399"
+    for unsafe in (
+        "https://example.org", "//example.org", "/admin",
+        "/items/../../admin", "/items\\\\other", "/items#fragment",
+    ):
+        assert _safe_items_return(unsafe) is None

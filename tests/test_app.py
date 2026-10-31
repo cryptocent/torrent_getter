@@ -215,7 +215,7 @@ def test_items_page_displays_catalog_metadata_and_downloads(tmp_path):
     assert b'class="active">Grid' in response.data
     assert b"per_page=24" in response.data
     assert b"Open 1080p magnet" in response.data
-    assert b"Open 720p torrent" in response.data
+    assert b"Download 720p torrent" in response.data
     assert b'target="_blank"' in response.data
 
 
