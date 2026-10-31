@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse, urlsplit
 from xml.etree import ElementTree
 
-from flask import Flask, Response, abort, flash, redirect, render_template, request, send_from_directory, session, url_for
+from flask import Flask, Response, abort, flash, jsonify, redirect, render_template, request, send_from_directory, session, url_for
 
 from db import (
     cleanup_incomplete_work,
@@ -121,17 +121,30 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     @app.post("/downloads/<int:download_id>/send")
     def send_download(download_id: int):
+        # AJAX requests get a JSON status without redirects. Regular HTML form
+        # submissions keep working if JavaScript is disabled.
+        json_request = (
+            request.headers.get("X-Requested-With") == "XMLHttpRequest"
+            and request.accept_mimetypes.accept_json
+        )
+
+        def reject(message: str, status: int):
+            if json_request:
+                return jsonify(ok=False, message=message), status
+            abort(status)
+
         if not qbit_enabled():
-            abort(503)
+            return reject("qBittorrent integration is not configured.", 503)
+
         provided = request.form.get("csrf_token", "")
         expected = session.get("qbit_send_csrf", "")
         if not provided or not expected or not secrets.compare_digest(provided, expected):
-            abort(403)
+            return reject("Your session expired. Refresh the page and try again.", 403)
 
         with db_connect() as conn:
             item = get_item(conn, download_id)
         if item is None:
-            abort(404)
+            return reject("This saved link is no longer available.", 404)
 
         try:
             allowed_hosts = {
@@ -148,9 +161,14 @@ def create_app(test_config: dict | None = None) -> Flask:
                 category=app.config["QBIT_MOVIES_CATEGORY"],
                 allowed_hosts=allowed_hosts,
             )
+            message = "Submitted to qBittorrent. Check the download queue."
+            if json_request:
+                return jsonify(ok=True, message=message, title=item["name"])
             flash("Torrent submitted to qBittorrent. Check its category for the download.", "success")
         except QBitSubmissionError as exc:
             app.logger.warning("qBittorrent submission failed for saved link %s: %s", download_id, exc)
+            if json_request:
+                return jsonify(ok=False, message=str(exc)), 502
             flash(str(exc), "error")
 
         return redirect(_safe_items_return(request.form.get("return_to", "")) or url_for("items"))
