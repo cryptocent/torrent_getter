@@ -759,3 +759,95 @@ th {
         grid-template-columns: 1fr;
     }
 }
+
+
+
+/* Non-blocking, dismissible confirmations for asynchronous qBittorrent sends. */
+.qbit-notifications {
+    position: fixed;
+    top: 18px;
+    right: 18px;
+    z-index: 1100;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: calc(100vh - 36px);
+    overflow-y: auto;
+    width: min(420px, calc(100vw - 36px));
+    pointer-events: none;
+}
+
+.qbit-toast {
+    align-items: flex-start;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 5px solid var(--accent);
+    border-radius: 10px;
+    box-shadow: 0 10px 32px rgba(16, 24, 40, 0.18);
+    display: flex;
+    gap: 12px;
+    padding: 14px 12px 14px 16px;
+    pointer-events: auto;
+}
+
+.qbit-toast[data-state="success"] {
+    border-left-color: var(--success);
+}
+
+.qbit-toast[data-state="error"] {
+    border-left-color: var(--error);
+}
+
+.qbit-toast-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.qbit-toast-title {
+    color: var(--ink);
+    display: block;
+    font-size: 0.98rem;
+}
+
+.qbit-toast-message {
+    color: var(--muted);
+    font-size: 0.9rem;
+    margin: 4px 0 0;
+    overflow-wrap: anywhere;
+}
+
+.qbit-toast-dismiss {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: 6px;
+    color: var(--muted);
+    display: inline-flex;
+    flex: 0 0 auto;
+    font-size: 1.3rem;
+    font-weight: 400;
+    justify-content: center;
+    min-height: 28px;
+    min-width: 28px;
+    padding: 0;
+}
+
+.qbit-toast-dismiss:hover,
+.qbit-toast-dismiss:focus-visible {
+    background: var(--bg);
+    color: var(--ink);
+}
+
+.send-form button:disabled {
+    cursor: wait;
+    opacity: 0.7;
+}
+
+@media (max-width: 560px) {
+    .qbit-notifications {
+        top: 10px;
+        right: 10px;
+        width: calc(100vw - 20px);
+        max-height: calc(100vh - 20px);
+    }
+}

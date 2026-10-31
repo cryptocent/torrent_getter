@@ -4,7 +4,10 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}Torrent Getter{% endblock %}</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v='20261031-async-send') }}">
+    {% if qbit_enabled %}
+        <script src="{{ url_for('static', filename='qbit_send.js', v='20261031-async-send') }}" defer></script>
+    {% endif %}
 </head>
 <body>
     <header class="site-header">
@@ -35,5 +38,8 @@
 
         {% block content %}{% endblock %}
     </main>
+    {% if qbit_enabled %}
+        <div id="qbit-notifications" class="qbit-notifications" aria-live="polite" aria-atomic="false"></div>
+    {% endif %}
 </body>
 </html>
