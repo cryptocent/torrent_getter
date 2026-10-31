@@ -277,3 +277,69 @@ def test_send_redirect_targets_must_be_local_browse_or_detail_pages():
         "/items/../../admin", "/items\\\\other", "/items#fragment",
     ):
         assert _safe_items_return(unsafe) is None
+
+
+def test_submit_magnet_accepts_qbittorrent_52_http_204(monkeypatch):
+    login = Mock(status_code=204, text="")
+    version = Mock(status_code=200, text="v5.2.3")
+    accepted = Mock(status_code=200, text="Ok.")
+    accepted.json.side_effect = ValueError()
+    session = Mock()
+    session.post.side_effect = [login, accepted]
+    session.get.return_value = version
+    monkeypatch.setattr(qbit_client.requests, "Session", lambda: session)
+
+    submit_to_qbittorrent(
+        link_url="magnet:?xt=urn:btih:abc123",
+        link_type="magnet",
+        base_url="http://qbittorrent:8080",
+        username="admin",
+        password="secret",
+        category="MOVIES",
+        allowed_hosts=set(),
+    )
+    assert session.get.call_count == 1
+    assert session.get.call_args.args[0] == "http://qbittorrent:8080/api/v2/app/version"
+    assert session.get.call_args.kwargs["allow_redirects"] is False
+    assert session.post.call_count == 2
+    assert session.post.call_args.kwargs["data"]["category"] == "MOVIES"
+
+
+def test_qbittorrent_204_login_with_rejected_api_session_does_not_submit(monkeypatch):
+    login = Mock(status_code=204, text="")
+    session = Mock()
+    session.post.return_value = login
+    session.get.return_value = Mock(status_code=403)
+    monkeypatch.setattr(qbit_client.requests, "Session", lambda: session)
+
+    with pytest.raises(QBitSubmissionError, match="API verification failed \\(HTTP 403\\)"):
+        submit_to_qbittorrent(
+            link_url="magnet:?xt=urn:btih:abc123",
+            link_type="magnet",
+            base_url="http://qbittorrent:8080",
+            username="admin",
+            password="secret",
+            category="MOVIES",
+            allowed_hosts=set(),
+        )
+
+    # Authentication and read-only verification only; no download was submitted.
+    assert session.post.call_count == 1
+
+
+def test_qbittorrent_http_200_without_ok_body_is_not_accepted(monkeypatch):
+    session = Mock()
+    session.post.return_value = Mock(status_code=200, text="Fails.")
+    monkeypatch.setattr(qbit_client.requests, "Session", lambda: session)
+
+    with pytest.raises(QBitSubmissionError, match="authentication failed"):
+        submit_to_qbittorrent(
+            link_url="magnet:?xt=urn:btih:abc123",
+            link_type="magnet",
+            base_url="http://qbittorrent:8080",
+            username="admin",
+            password="wrong-password",
+            category="MOVIES",
+            allowed_hosts=set(),
+        )
+    assert session.post.call_count == 1
