@@ -376,7 +376,7 @@ def _app_with_saved_magnet(tmp_path):
 def test_async_send_returns_success_json_without_navigation(tmp_path, monkeypatch):
     app, item_id = _app_with_saved_magnet(tmp_path)
     client = app.test_client()
-    page = client.get("/items?page=3")
+    page = client.get("/items")
     assert b'qbit_send.js' in page.data
     assert b'id="qbit-notifications"' in page.data
     assert b'data-item-title="Example Movie"' in page.data
