@@ -28,7 +28,7 @@
             <div class="download-action-group">
                 <a class="download-link" href="{{ download.link_url }}" target="_blank" rel="noreferrer">{% if download.link_type == 'torrent' %}Download{% else %}Open{% endif %} {{ download.label }}</a>
                 {% if qbit_enabled %}
-                    <form method="post" action="{{ url_for('send_download', download_id=download.id) }}" class="send-form">
+                    <form method="post" action="{{ url_for('send_download', download_id=download.id) }}" class="send-form" data-item-title="{{ item.name }}">
                         <input type="hidden" name="csrf_token" value="{{ qbit_csrf_token }}">
                         <input type="hidden" name="return_to" value="{{ request.path }}">
                         <button type="submit" class="download-link">Send {{ download.label }} to qBittorrent</button>
