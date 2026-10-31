@@ -140,8 +140,29 @@ def submit_to_qbittorrent(
             timeout=(5, 15),
             allow_redirects=False,
         )
-        if auth.status_code != 200 or auth.text.strip() != "Ok.":
+        # qBittorrent 5.2+ responds with 204 No Content after a successful
+        # login; older versions respond with 200 and "Ok.".
+        if not (
+            (auth.status_code == 200 and auth.text.strip() == "Ok.")
+            or auth.status_code == 204
+        ):
             raise QBitSubmissionError("qBittorrent authentication failed; verify its credentials.")
+
+        if auth.status_code == 204:
+            # A 204 response alone does not prove the session can access the API.
+            # Verify the SID cookie / allowed-network session with a read-only call
+            # before attempting to add any torrent.
+            verified = client.get(
+                root + "/api/v2/app/version",
+                headers=headers,
+                timeout=(5, 15),
+                allow_redirects=False,
+            )
+            if verified.status_code != 200:
+                raise QBitSubmissionError(
+                    "qBittorrent login returned HTTP 204, but API verification failed "
+                    f"(HTTP {verified.status_code}). Check WebUI authentication and access settings."
+                )
 
         form = {"category": category, "autoTMM": "true"}
         kwargs = (
