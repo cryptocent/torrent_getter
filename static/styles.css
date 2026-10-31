@@ -493,6 +493,13 @@ th {
     align-items: center;
 }
 
+.download-action-group {
+    align-items: center;
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
 .send-form {
     margin: 0;
 }
