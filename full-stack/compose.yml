@@ -1,0 +1,196 @@
+name: media-full-stack
+
+services:
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      TZ: "${TZ:-Australia/Melbourne}"
+    ports:
+      - "${HOST_BIND_IP:-127.0.0.1}:8096:8096"
+    volumes:
+      - "${CONFIG_ROOT:-./config}/jellyfin/config:/config"
+      - "${CONFIG_ROOT:-./config}/jellyfin/cache:/cache"
+      - type: bind
+        source: ${NETWORK_ROOT:-/mnt/media-shares}
+        target: /network
+        read_only: true
+        bind:
+          propagation: rslave
+          create_host_path: false
+    restart: unless-stopped
+    networks: [media]
+
+  jellyseerr:
+    image: fallenbagel/jellyseerr:latest
+    environment:
+      TZ: "${TZ:-Australia/Melbourne}"
+      LOG_LEVEL: info
+    ports:
+      - "${HOST_BIND_IP:-127.0.0.1}:5055:5055"
+    volumes:
+      - "${CONFIG_ROOT:-./config}/jellyseerr:/app/config"
+    restart: unless-stopped
+    networks: [media]
+
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    environment: &linuxserver-env
+      PUID: "${PUID:-1000}"
+      PGID: "${PGID:-1000}"
+      TZ: "${TZ:-Australia/Melbourne}"
+    ports:
+      - "${HOST_BIND_IP:-127.0.0.1}:7878:7878"
+    volumes:
+      - "${CONFIG_ROOT:-./config}/radarr:/config"
+      - type: bind
+        source: ${NETWORK_ROOT:-/mnt/media-shares}
+        target: /network
+        bind:
+          propagation: rslave
+          create_host_path: false
+    restart: unless-stopped
+    networks: [media]
+
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    environment: *linuxserver-env
+    ports:
+      - "${HOST_BIND_IP:-127.0.0.1}:8989:8989"
+    volumes:
+      - "${CONFIG_ROOT:-./config}/sonarr:/config"
+      - type: bind
+        source: ${NETWORK_ROOT:-/mnt/media-shares}
+        target: /network
+        bind:
+          propagation: rslave
+          create_host_path: false
+    restart: unless-stopped
+    networks: [media]
+
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    environment: *linuxserver-env
+    ports:
+      - "${HOST_BIND_IP:-127.0.0.1}:9696:9696"
+    volumes:
+      - "${CONFIG_ROOT:-./config}/prowlarr:/config"
+    restart: unless-stopped
+    networks: [media]
+
+  torrent_getter:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      TZ: "${TZ:-Australia/Melbourne}"
+      APP_HOST: 0.0.0.0
+      APP_PORT: "5000"
+      APP_DEBUG: "false"
+      RSS_FEED_LIMIT: "${RSS_FEED_LIMIT:-500}"
+      APP_SECRET_KEY: "${APP_SECRET_KEY:-}"
+      QBIT_URL: "${QBIT_URL:-http://qbittorrent:8080}"
+      QBIT_USERNAME: "${QBIT_USERNAME:-admin}"
+      QBIT_PASSWORD: "${QBIT_PASSWORD:-}"
+      QBIT_MOVIES_CATEGORY: "${QBIT_MOVIES_CATEGORY:-MOVIES}"
+      QBIT_TORRENT_ALLOWED_HOSTS: "${QBIT_TORRENT_ALLOWED_HOSTS:-}"
+    ports:
+      - "${HOST_BIND_IP:-127.0.0.1}:5010:5000"
+    volumes:
+      - "${CONFIG_ROOT:-./config}/torrent_getter:/app/instance"
+    restart: unless-stopped
+    networks: [media]
+
+  iqbit:
+    image: imthai/iqbit:latest
+    environment:
+      QBIT_HOST: http://qbittorrent:8080
+      STANDALONE_SERVER_PORT: "8081"
+    depends_on:
+      - qbittorrent
+    ports:
+      - "${HOST_BIND_IP:-127.0.0.1}:8081:8081"
+    restart: unless-stopped
+    networks: [media]
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    environment:
+      <<: *linuxserver-env
+      WEBUI_PORT: "8080"
+      TORRENTING_PORT: "${TORRENT_PORT:-6881}"
+    ports:
+      - "${HOST_BIND_IP:-127.0.0.1}:8080:8080"
+      - "${TORRENT_BIND_IP:-0.0.0.0}:${TORRENT_PORT:-6881}:${TORRENT_PORT:-6881}/tcp"
+      - "${TORRENT_BIND_IP:-0.0.0.0}:${TORRENT_PORT:-6881}:${TORRENT_PORT:-6881}/udp"
+    volumes:
+      # qBittorrent configuration on the 256 GB SSD
+      - "${CONFIG_ROOT:-./config}/qbittorrent:/config"
+
+      # Incomplete downloads on the 256 GB SSD
+      - type: bind
+        source: /srv/media-ssd/downloads/incomplete
+        target: /local-incomplete
+        bind:
+          create_host_path: false
+
+      # Windows network shares for completed downloads
+      - type: bind
+        source: ${NETWORK_ROOT:-/mnt/media-shares}
+        target: /network
+        bind:
+          propagation: rslave
+          create_host_path: false
+
+      # Preserve the existing default downloads safety mapping
+      - type: bind
+        source: ${NETWORK_ROOT:-/mnt/media-shares}
+        target: /downloads
+        bind:
+          propagation: rslave
+          create_host_path: false
+
+    restart: unless-stopped
+    networks: [media]
+
+  bazarr:
+    image: lscr.io/linuxserver/bazarr:latest
+    environment: *linuxserver-env
+    ports:
+      - "${HOST_BIND_IP:-127.0.0.1}:6767:6767"
+    volumes:
+      - "${CONFIG_ROOT:-./config}/bazarr:/config"
+      - type: bind
+        source: ${NETWORK_ROOT:-/mnt/media-shares}
+        target: /network
+        bind:
+          propagation: rslave
+          create_host_path: false
+    restart: unless-stopped
+    networks: [media]
+
+  uptime-kuma:
+    image: louislam/uptime-kuma:2
+    ports:
+      - "${HOST_BIND_IP:-127.0.0.1}:3001:3001"
+    volumes:
+      - "${CONFIG_ROOT:-./config}/uptime-kuma:/app/data"
+    restart: unless-stopped
+    networks: [media]
+
+  fastchannels:
+    image: ghcr.io/kineticman/fastchannels:latest
+    environment:
+      GEO_CHECK_ENABLED: "${GEO_CHECK_ENABLED:-1}"
+    ports:
+      - "${HOST_BIND_IP:-127.0.0.1}:5523:5523"
+    volumes:
+      - "${CONFIG_ROOT:-./config}/fastchannels/data:/data"
+      - "${CONFIG_ROOT:-./config}/fastchannels/adb:/root/.android"
+    restart: unless-stopped
+    networks: [media]
+
+networks:
+  media:
+    driver: bridge
