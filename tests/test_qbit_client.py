@@ -343,3 +343,125 @@ def test_qbittorrent_http_200_without_ok_body_is_not_accepted(monkeypatch):
             allowed_hosts=set(),
         )
     assert session.post.call_count == 1
+
+
+def _async_headers():
+    return {"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"}
+
+
+def _app_with_saved_magnet(tmp_path):
+    database = str(tmp_path / "async.sqlite")
+    app = create_app({
+        "TESTING": True,
+        "DATABASE": database,
+        "SECRET_KEY": "secure-test-key",
+        "QBIT_URL": "http://qbittorrent:8080",
+        "QBIT_PASSWORD": "secret",
+        "QBIT_MOVIES_CATEGORY": "MOVIES",
+    })
+    with connect(database) as conn:
+        run_id = create_run(conn, ScrapeConfig(start_url="https://example.org"))
+        record_item(conn, run_id, ScrapedItem(
+            source_url="https://example.org",
+            detail_url="https://example.org/movie",
+            link_url="magnet:?xt=urn:btih:abc123",
+            link_type="magnet",
+            name="Example Movie",
+        ))
+        item_id = conn.execute("SELECT id FROM items LIMIT 1").fetchone()[0]
+        conn.commit()
+    return app, item_id
+
+
+def test_async_send_returns_success_json_without_navigation(tmp_path, monkeypatch):
+    app, item_id = _app_with_saved_magnet(tmp_path)
+    client = app.test_client()
+    page = client.get("/items?page=3")
+    assert b'qbit_send.js' in page.data
+    assert b'id="qbit-notifications"' in page.data
+    assert b'data-item-title="Example Movie"' in page.data
+
+    with client.session_transaction() as sess:
+        token = sess["qbit_send_csrf"]
+    submissions = []
+    monkeypatch.setattr("app.submit_to_qbittorrent", lambda **kwargs: submissions.append(kwargs))
+
+    response = client.post(
+        f"/downloads/{item_id}/send",
+        data={"csrf_token": token, "return_to": "/items?page=3"},
+        headers=_async_headers(),
+    )
+    assert response.status_code == 200
+    assert response.is_json
+    assert response.json == {
+        "ok": True,
+        "message": "Submitted to qBittorrent. Check the download queue.",
+        "title": "Example Movie",
+    }
+    assert "Location" not in response.headers
+    assert submissions[0]["category"] == "MOVIES"
+    with client.session_transaction() as sess:
+        assert not sess.get("_flashes")
+
+
+def test_async_send_failure_returns_error_json_without_redirect(tmp_path, monkeypatch):
+    app, item_id = _app_with_saved_magnet(tmp_path)
+    client = app.test_client()
+    client.get(f"/items/{item_id}")
+    with client.session_transaction() as sess:
+        token = sess["qbit_send_csrf"]
+
+    def reject(**kwargs):
+        raise QBitSubmissionError("qBittorrent rejected the torrent (HTTP 400).")
+
+    monkeypatch.setattr("app.submit_to_qbittorrent", reject)
+    response = client.post(
+        f"/downloads/{item_id}/send",
+        data={"csrf_token": token},
+        headers=_async_headers(),
+    )
+    assert response.status_code == 502
+    assert response.is_json
+    assert response.json["ok"] is False
+    assert "rejected" in response.json["message"]
+    assert "Location" not in response.headers
+    with client.session_transaction() as sess:
+        assert not sess.get("_flashes")
+
+
+def test_async_send_rejects_bad_csrf_and_unknown_id_with_json(tmp_path, monkeypatch):
+    app, item_id = _app_with_saved_magnet(tmp_path)
+    client = app.test_client()
+    client.get("/items")
+    unauthorized = client.post(
+        f"/downloads/{item_id}/send",
+        data={"csrf_token": "invalid"},
+        headers=_async_headers(),
+    )
+    assert unauthorized.status_code == 403
+    assert unauthorized.json["ok"] is False
+
+    with client.session_transaction() as sess:
+        token = sess["qbit_send_csrf"]
+    not_found = client.post(
+        "/downloads/999999999/send",
+        data={"csrf_token": token},
+        headers=_async_headers(),
+    )
+    assert not_found.status_code == 404
+    assert not_found.json["ok"] is False
+
+
+def test_async_send_preserves_non_javascript_redirect_fallback(tmp_path, monkeypatch):
+    app, item_id = _app_with_saved_magnet(tmp_path)
+    client = app.test_client()
+    client.get("/items")
+    with client.session_transaction() as sess:
+        token = sess["qbit_send_csrf"]
+    monkeypatch.setattr("app.submit_to_qbittorrent", lambda **kwargs: None)
+    response = client.post(
+        f"/downloads/{item_id}/send",
+        data={"csrf_token": token, "return_to": "/items?sort=title_asc"},
+    )
+    assert response.status_code == 302
+    assert response.headers["Location"] == "/items?sort=title_asc"
