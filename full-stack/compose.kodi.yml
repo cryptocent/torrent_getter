@@ -1,0 +1,30 @@
+# Optional Kodi desktop. Combine with the existing compose.yml and compose.foxtel-guide.yml.
+# Kodi browser desktop is unauthenticated. Keep browser port bound to localhost.
+# Upstream image: https://github.com/fhriley/kodi-headless-novnc
+services:
+  kodi:
+    image: fhriley/kodi-headless-novnc:Omega
+    init: true
+    environment:
+      TZ: "${TZ:-Australia/Melbourne}"
+      KODI_UID: "${PUID:-1000}"
+      KODI_GID: "${PGID:-1000}"
+      KODI_UMASK: "027"
+    ports:
+      - "${KODI_GUI_BIND_IP:-127.0.0.1}:${KODI_GUI_PORT:-8000}:8000"
+    expose:
+      - "8080"
+    volumes:
+      - "${CONFIG_ROOT:-./config}/kodi:/data"
+    shm_size: "512mb"
+    restart: unless-stopped
+    networks: [kodi-control]
+
+  foxtel-guide:
+    environment:
+      KODI_RPC_URL: "http://kodi:8080/jsonrpc"
+    networks: [media, kodi-control]
+
+networks:
+  kodi-control:
+    driver: bridge
