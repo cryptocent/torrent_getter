@@ -93,6 +93,128 @@ References:
 - https://www.foxtel.com.au/now/support/how-it-works/eligible-devices.html
 - https://www.foxtel.com.au/now/about/terms.html
 
+## Install Kodi in the same Docker media stack (optional)
+
+**Yes: Kodi can now be deployed alongside Jellyfin using an opt-in Compose
+override.** This does not install a working Foxtel Now add-on and does **not**
+make paid Foxtel Now video available within Jellyfin. The historical Kodi
+Foxtel Go add-on is deprecated and was removed from the current SlyGuy
+catalogue. A Kodi player running in Docker also may not support protected
+video, audio or Widevine correctly through a virtual browser desktop.
+
+The optional image is [fhriley/kodi-headless-novnc:Omega](https://github.com/fhriley/kodi-headless-novnc).
+Its graphical Kodi desktop is available through an HTTP noVNC page. The
+image is a third-party Kodi build, not an official Foxtel application.
+
+### One-time configuration
+
+Start from your existing media stack checkout. Keep existing uncommitted changes
+intact and switch to this feature branch safely before continuing:
+
+    cd /srv/media-ssd/apps/torrent_getter
+    git status --short
+    git fetch origin feature/foxtel-guide-jellyfin-bridge
+    git switch feature/foxtel-guide-jellyfin-bridge
+
+If local changes prevent switching, resolve them first. **Do not use git reset
+--hard or delete existing config.**
+
+Use the private full-stack/.env that your deployment already has. Add a strong
+feed token if not yet set:
+
+    cd full-stack
+    python3 -c 'import secrets; print("FOXTEL_GUIDE_FEED_TOKEN=" + secrets.token_urlsafe(36))'
+    nano .env
+    chmod 600 .env
+
+Paste the generated assignment once into .env. The token is for the **bridge**,
+not your Foxtel account or Kodi password. Do not commit any credentials.
+
+Prepare and start the optional services only:
+
+    bash setup-kodi.sh --prepare-only
+    bash setup-kodi.sh
+
+This script checks combined Compose syntax, resolves CONFIG_ROOT, seeds
+Kodi's local database configuration only if missing, and creates an empty
+channel mapping only if missing. It then starts **only Kodi and foxtel-guide**.
+Jellyfin, qBittorrent and other production services are not recreated.
+
+The Kodi config is persisted in CONFIG_ROOT/kodi and the guide mapping is
+persisted in CONFIG_ROOT/foxtel-guide. Neither is added to source control.
+
+### Open Kodi and configure its remote control
+
+For security the unauthenticated Kodi noVNC desktop is bound by default to
+the Docker host's **localhost**, not the host's LAN address. From another
+computer use SSH local port forwarding:
+
+    ssh -L 8000:127.0.0.1:8000 jelly@YOUR_DOCKER_HOST_IP
+
+Then open http://127.0.0.1:8000 in the browser **on the SSH client device**.
+You can also open that URL directly in a browser on the Docker host.
+
+The noVNC desktop has **no built-in login**. Do not expose its port 8000
+publicly. If you explicitly choose LAN access, set KODI_GUI_BIND_IP to the
+server's trusted LAN address in .env, and secure access using a firewall or
+authenticated reverse proxy. The optional override never publishes Kodi's
+JSON-RPC port 8080 or VNC port 5900 to the host.
+
+Inside Kodi, go to **Settings > Services > Control** and enable HTTP remote
+control. Set a unique Kodi HTTP username/password (not your Foxtel password).
+Add the same Kodi HTTP credentials to the private full-stack/.env:
+
+    KODI_RPC_USERNAME=kodi
+    KODI_RPC_PASSWORD=REPLACE_WITH_KODI_HTTP_PASSWORD
+
+The Compose override automatically points the bridge to
+http://kodi:8080/jsonrpc on the isolated kodi-control Docker network.
+Redeploy **only the bridge** to apply any modified Kodi RPC credentials:
+
+    docker compose --env-file .env -f compose.yml -f compose.foxtel-guide.yml -f compose.kodi.yml up -d --no-deps --build foxtel-guide
+
+Kodi and the bridge share a dedicated Docker network separate from the
+other media containers. Jellyfin retains connectivity to the bridge on the
+original media network, but it cannot decode Kodi plugin URLs or Foxtel DRM.
+
+To check Kodi and the companion status after setting up Kodi:
+
+    docker compose --env-file .env -f compose.yml -f compose.foxtel-guide.yml -f compose.kodi.yml ps kodi foxtel-guide
+    docker compose --env-file .env -f compose.yml -f compose.foxtel-guide.yml -f compose.kodi.yml logs --tail=100 kodi foxtel-guide
+
+The Kodi control page remains available at:
+
+    http://YOUR_BRIDGE_HOST_IP:8765/kodi/ui?token=YOUR_FEED_TOKEN
+
+If HOST_BIND_IP in .env is localhost, use an SSH tunnel for bridge port 8765
+too. Add Kodi channel entries only from an authenticated and functioning Kodi
+Foxtel add-on. **Kodi itself contains no Foxtel credential login by default**.
+
+### Architecture and limitations
+
+    Browser --SSH tunnel--> Kodi noVNC :8000
+                                 |
+                           Kodi app/config
+                                 |  HTTP JSON-RPC :8080 (private network)
+                                 |
+    Jellyfin <--> foxtel-guide (M3U/XMLTV and Kodi channel launch)
+                                 |
+                         Independent authorised IPTV streams
+
+The Kodi browser desktop is useful for installing and configuring add-ons and
+testing a local Kodi playback request. It is **not** a guaranteed way to view
+DRM-protected Foxtel Now video in your browser or Jellyfin. Foxtel Now requires
+compatible authentication and playback support, which have not been verified.
+
+To stop just the optional Kodi companion, not the rest of the stack:
+
+    docker compose --env-file .env -f compose.yml -f compose.foxtel-guide.yml -f compose.kodi.yml stop kodi foxtel-guide
+
+Avoid `down -v` or deleting the Kodi data directory, as it would affect
+persisted settings and credentials.
+
+---
+
 ## Optional Kodi Foxtel playback companion
 
 This **does not make Foxtel Now playable through Jellyfin**. It is a
