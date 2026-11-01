@@ -8,7 +8,8 @@ import tempfile
 import threading
 import unittest
 from urllib.error import HTTPError
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
+from unittest.mock import Mock
 import xml.etree.ElementTree as ET
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -94,6 +95,56 @@ class BridgeTests(unittest.TestCase):
             status = json.load(response)
             self.assertFalse(status["foxtel_now_login_supported"])
             self.assertEqual(status["configured_streams"], 1)
+
+
+    def test_kodi_http_authenticated_ui_and_remote_launch(self):
+        token = "b" * 32
+        kodi_playlist = self.dir / "kodi-foxtel.m3u"
+        kodi_playlist.write_text(
+            '#EXTM3U\n#EXTINF:-1 tvg-id="F1S",Foxtel Example\n'
+            'plugin://plugin.video.foxtel.go/?_=play&id=3889324&media_type=1\n',
+            encoding="utf-8",
+        )
+        self.bridge.kodi.playlist_path = str(kodi_playlist)
+        self.bridge.kodi.remote = Mock()
+        self.bridge.kodi.remote.ping.return_value = True
+        server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(self.bridge, token))
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        base = f"http://127.0.0.1:{server.server_port}"
+        with urlopen(base + "/kodi/ui?token=" + token, timeout=3) as response:
+            self.assertEqual(response.status, 200)
+            self.assertIn(b"Play on Kodi", response.read())
+            self.assertEqual(response.headers["Referrer-Policy"], "no-referrer")
+        with urlopen(base + "/kodi/channels?token=" + token, timeout=3) as response:
+            catalog = json.load(response)
+        self.assertEqual(len(catalog["channels"]), 1)
+        channel_id = catalog["channels"][0]["channel_id"]
+        self.assertNotIn("_play_url", catalog["channels"][0])
+        unauthorised = Request(
+            base + "/kodi/play",
+            data=json.dumps({"channel_id": channel_id}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with self.assertRaises(HTTPError) as rejected:
+            urlopen(unauthorised, timeout=3)
+        self.assertEqual(rejected.exception.code, 401)
+        self.bridge.kodi.remote.play.assert_not_called()
+        authorised = Request(
+            base + "/kodi/play",
+            data=json.dumps({"channel_id": channel_id}).encode(),
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+            method="POST",
+        )
+        with urlopen(authorised, timeout=3) as response:
+            self.assertEqual(response.status, 202)
+            self.assertTrue(json.load(response)["sent_to_kodi"])
+        self.bridge.kodi.remote.play.assert_called_once_with(
+            "plugin://plugin.video.foxtel.go/?_=play&id=3889324&media_type=1"
+        )
 
 
 if __name__ == "__main__":
