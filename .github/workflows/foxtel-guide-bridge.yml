@@ -1,0 +1,25 @@
+name: Foxtel guide bridge checks
+
+on:
+  pull_request:
+    paths:
+      - "full-stack/foxtel-guide/**"
+      - "full-stack/compose.foxtel-guide.yml"
+      - ".github/workflows/foxtel-guide-bridge.yml"
+  push:
+    branches:
+      - feature/foxtel-guide-jellyfin-bridge
+    paths:
+      - "full-stack/foxtel-guide/**"
+      - "full-stack/compose.foxtel-guide.yml"
+      - ".github/workflows/foxtel-guide-bridge.yml"
+
+jobs:
+  offline-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python unit tests
+        run: python3 -m unittest discover -s full-stack/foxtel-guide/tests -v
+      - name: Docker image builds
+        run: docker build -t foxtel-guide-bridge:ci full-stack/foxtel-guide
