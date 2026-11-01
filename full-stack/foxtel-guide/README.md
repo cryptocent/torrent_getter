@@ -122,17 +122,24 @@ your Foxtel credentials with this Docker service.
 
        docker compose --env-file .env -f compose.yml -f compose.foxtel-guide.yml up -d --no-deps --build foxtel-guide
 
-5. List the imported channel catalogue (the provider add-on URL is not
+5. Open the optional visual Kodi remote page in a trusted LAN browser:
+
+       http://YOUR_DOCKER_HOST_IP:8765/kodi/ui?token=YOUR_FEED_TOKEN
+
+   The interface reports Kodi availability and provides Play on Kodi buttons.
+   Keep this token-bearing URL private.
+
+6. List the imported channel catalogue (the provider add-on URL is not
    returned, only a channel identifier and metadata):
 
        curl -fsS -H "Authorization: Bearer YOUR_FEED_TOKEN" http://YOUR_DOCKER_HOST_IP:8765/kodi/channels
 
-6. Request playback for a channel ID in the response. The video opens **on
+7. Request playback for a channel ID in the response. The video opens **on
    the Kodi screen**, not in Jellyfin:
 
        curl -fsS -X POST -H "Authorization: Bearer YOUR_FEED_TOKEN" -H "Content-Type: application/json" -d '{"channel_id":"PASTE_CHANNEL_ID"}' http://YOUR_DOCKER_HOST_IP:8765/kodi/play
 
-7. Check that Kodi is reachable:
+8. Check that Kodi is reachable:
 
        curl -fsS -H "Authorization: Bearer YOUR_FEED_TOKEN" http://YOUR_DOCKER_HOST_IP:8765/kodi/status
 
