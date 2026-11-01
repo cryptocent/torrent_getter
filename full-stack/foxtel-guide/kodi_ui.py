@@ -31,7 +31,8 @@ const auth = {"Authorization": "Bearer " + token};
 const state = document.getElementById("state");
 const channels = document.getElementById("channels");
 async function request(path, options={}) {
-  const response = await fetch(path, {cache:"no-store", headers: {...auth, ...(options.headers||{})}, ...options});
+  const {headers: extraHeaders = {}, ...rest} = options;
+  const response = await fetch(path, {cache:"no-store", ...rest, headers: {...auth, ...extraHeaders}});
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || ("HTTP " + response.status));
   return data;
