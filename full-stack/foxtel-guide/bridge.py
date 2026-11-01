@@ -17,6 +17,7 @@ from urllib.request import Request, urlopen
 import xml.etree.ElementTree as ET
 
 from kodi_adapter import KodiFoxtelPort, KodiRemote, KodiBridgeError
+from kodi_ui import PAGE as KODI_UI_PAGE
 
 PORT = int(os.environ.get("BRIDGE_PORT", "8765"))
 MAX_COMPRESSED = 8 * 1024 * 1024
@@ -241,6 +242,8 @@ def make_handler(bridge, token):
             self.send_response(code)
             self.send_header("Content-Type", content_type)
             self.send_header("Cache-Control", "no-store")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("X-Frame-Options", "DENY")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
@@ -268,6 +271,8 @@ def make_handler(bridge, token):
                     ids = {row["tvg_id"] for row in bridge.channels()}
                     data = xmltv_filter(bridge.guide(), ids)
                     self.respond(200, data, "application/xml; charset=utf-8", head_only)
+                elif path == "/kodi/ui":
+                    self.respond(200, KODI_UI_PAGE, "text/html; charset=utf-8", head_only)
                 elif path == "/kodi/channels":
                     self.send_json(200, {"channels": bridge.kodi.public_channels()}, head_only)
                 elif path == "/kodi/status":
