@@ -16,6 +16,8 @@ from urllib.parse import parse_qs, urlsplit
 from urllib.request import Request, urlopen
 import xml.etree.ElementTree as ET
 
+from kodi_adapter import KodiFoxtelPort, KodiRemote, KodiBridgeError
+
 PORT = int(os.environ.get("BRIDGE_PORT", "8765"))
 MAX_COMPRESSED = 8 * 1024 * 1024
 MAX_XML = 32 * 1024 * 1024
@@ -106,6 +108,16 @@ class Bridge:
         self._last_success = 0
         self._last_error = None
         self._lock = threading.Lock()
+        rpc_url = os.environ.get("KODI_RPC_URL", "").strip()
+        remote = KodiRemote(
+            rpc_url,
+            os.environ.get("KODI_RPC_USERNAME", ""),
+            os.environ.get("KODI_RPC_PASSWORD", ""),
+        ) if rpc_url else None
+        self.kodi = KodiFoxtelPort(
+            os.environ.get("KODI_FOXTEL_M3U", "/data/kodi-foxtel.m3u"),
+            remote,
+        )
 
     def channels(self):
         if not self.config_file.exists():
@@ -167,6 +179,7 @@ class Bridge:
             "guide_last_success_utc_epoch": self._last_success or None,
             "guide_last_error": self._last_error,
             "configuration_error": config_error,
+            "kodi_companion_configured": self.kodi.remote is not None,
         }
 
 
@@ -183,6 +196,46 @@ def make_handler(bridge, token):
 
         def do_GET(self):
             self.handle_request(head_only=False)
+
+        def authorized(self):
+            parts = urlsplit(self.path)
+            query_token = parse_qs(parts.query).get("token", [""])[0]
+            header = self.headers.get("Authorization", "")
+            supplied = header[7:] if header.startswith("Bearer ") else query_token
+            return hmac.compare_digest(supplied, token)
+
+        def do_POST(self):
+            path = urlsplit(self.path).path
+            if path != "/kodi/play":
+                self.send_json(404, {"error": "Not found"}, False)
+                return
+            if not self.authorized():
+                self.send_json(401, {"error": "Invalid feed token"}, False)
+                return
+            if self.headers.get("Content-Type", "").split(";")[0].strip().lower() != "application/json":
+                self.send_json(415, {"error": "JSON content type required"}, False)
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                length = -1
+            if not 0 < length <= 4096:
+                self.send_json(413, {"error": "Request body length must be 1 to 4096 bytes"}, False)
+                return
+            try:
+                data = json.loads(self.rfile.read(length))
+                if not isinstance(data, dict):
+                    raise ValueError("JSON body must be an object")
+                channel_id = data.get("channel_id")
+                result = bridge.kodi.play(channel_id)
+            except (ValueError, json.JSONDecodeError) as exc:
+                self.send_json(400, {"error": str(exc)}, False)
+            except KodiBridgeError as exc:
+                self.send_json(503, {"error": str(exc)}, False)
+            except OSError:
+                self.send_json(503, {"error": "Kodi playlist unavailable"}, False)
+            else:
+                self.send_json(202, result, False)
 
         def respond(self, code, payload, content_type, head_only):
             self.send_response(code)
@@ -203,10 +256,7 @@ def make_handler(bridge, token):
             if path == "/healthz":
                 self.send_json(200, {"status": "running"}, head_only)
                 return
-            query_token = parse_qs(parts.query).get("token", [""])[0]
-            header = self.headers.get("Authorization", "")
-            supplied = header[7:] if header.startswith("Bearer ") else query_token
-            if not hmac.compare_digest(supplied, token):
+            if not self.authorized():
                 self.send_json(401, {"error": "Invalid feed token"}, head_only)
                 return
             try:
@@ -218,6 +268,10 @@ def make_handler(bridge, token):
                     ids = {row["tvg_id"] for row in bridge.channels()}
                     data = xmltv_filter(bridge.guide(), ids)
                     self.respond(200, data, "application/xml; charset=utf-8", head_only)
+                elif path == "/kodi/channels":
+                    self.send_json(200, {"channels": bridge.kodi.public_channels()}, head_only)
+                elif path == "/kodi/status":
+                    self.send_json(200, bridge.kodi.status(), head_only)
                 elif path == "/catalog":
                     root = bridge.guide()
                     entries = []
@@ -226,6 +280,8 @@ def make_handler(bridge, token):
                     self.send_json(200, {"channels": entries}, head_only)
                 else:
                     self.send_json(404, {"error": "Not found"}, head_only)
+            except KodiBridgeError as exc:
+                self.send_json(503, {"error": str(exc)}, head_only)
             except (ValueError, OSError, json.JSONDecodeError) as exc:
                 self.send_json(400, {"error": str(exc)}, head_only)
             except RuntimeError as exc:
