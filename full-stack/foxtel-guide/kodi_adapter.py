@@ -8,8 +8,8 @@ import hashlib
 import json
 from pathlib import Path
 import re
-from urllib.parse import urlsplit
-from urllib.request import Request, build_opener, HTTPHandler
+from urllib.parse import urlsplit, parse_qs
+from urllib.request import Request, build_opener, HTTPRedirectHandler
 from urllib.error import HTTPError, URLError
 
 ALLOWED_ADDONS = frozenset(("plugin.video.foxtel.go", "plugin.video.foxtel.now"))
@@ -29,8 +29,16 @@ def plugin_url_allowed(url):
     if not isinstance(url, str) or len(url) > MAX_ENTRY_URL or CONTROL.search(url):
         return False
     parsed = urlsplit(url)
-    return (parsed.scheme == "plugin" and parsed.netloc in ALLOWED_ADDONS
-            and not parsed.username and not parsed.password and not parsed.fragment)
+    if not (parsed.scheme == "plugin" and parsed.netloc in ALLOWED_ADDONS
+            and not parsed.username and not parsed.password and not parsed.fragment):
+        return False
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    # Historical SlyGuy Foxtel exports use ?_=play&id=<numeric-id>.
+    # Do not allow arbitrary Kodi plugin actions from imported M3U files.
+    return (query.get("_") == ["play"]
+            and len(query.get("id", [])) == 1
+            and query["id"][0].isdigit()
+            and len(query["id"][0]) <= 24)
 
 
 def parse_kodi_playlist(data):
@@ -74,9 +82,6 @@ def read_kodi_playlist(path):
     return parse_kodi_playlist(source.read_bytes())
 
 
-class NoRedirectHandler(HTTPHandler):
-    pass
-
 
 class KodiRemote:
     """Fixed endpoint JSON-RPC client. No runtime user-supplied target URLs."""
@@ -110,12 +115,6 @@ class KodiRemote:
             ).decode("ascii")
             headers["Authorization"] = "Basic " + credentials
 
-        class BlockRedirects(HTTPHandler):
-            # Kodi JSON-RPC should not redirect. Prevent credentials from being
-            # forwarded to a third-party host.
-            pass
-
-        from urllib.request import HTTPRedirectHandler
         class DenyRedirects(HTTPRedirectHandler):
             def redirect_request(self, req, fp, code, msg, headers, newurl):
                 raise KodiBridgeError("Kodi RPC redirected unexpectedly")
