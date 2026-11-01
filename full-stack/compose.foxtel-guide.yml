@@ -8,6 +8,11 @@ services:
       FOXTEL_GUIDE_FEED_TOKEN: "${FOXTEL_GUIDE_FEED_TOKEN:?Set a strong local feed token in full-stack/.env}"
       FOXTEL_GUIDE_SOURCE: "${FOXTEL_GUIDE_SOURCE:-https://i.mjh.nz/Foxtel/epg.xml.gz}"
       FOXTEL_GUIDE_REFRESH_SECONDS: "${FOXTEL_GUIDE_REFRESH_SECONDS:-21600}"
+      # Optional: Kodi playback happens on Kodi, not Jellyfin.
+      KODI_RPC_URL: "${KODI_RPC_URL:-}"
+      KODI_RPC_USERNAME: "${KODI_RPC_USERNAME:-}"
+      KODI_RPC_PASSWORD: "${KODI_RPC_PASSWORD:-}"
+      KODI_FOXTEL_M3U: /data/kodi-foxtel.m3u
     ports:
       - "${HOST_BIND_IP:-127.0.0.1}:${FOXTEL_GUIDE_PORT:-8765}:8765"
     volumes:
