@@ -92,3 +92,62 @@ References:
 - https://jellyfin.org/docs/general/server/live-tv/
 - https://www.foxtel.com.au/now/support/how-it-works/eligible-devices.html
 - https://www.foxtel.com.au/now/about/terms.html
+
+## Optional Kodi Foxtel playback companion
+
+This **does not make Foxtel Now playable through Jellyfin**. It is a
+controlled way for the Docker service to request playback on a separately
+running Kodi device that has a working and authorised Foxtel add-on.
+
+**Prerequisites:** a Kodi installation with HTTP JSON-RPC enabled, the Kodi
+Foxtel Go or Foxtel Now add-on already installed, and a working authenticated
+subscription within that Kodi add-on. The historical Foxtel add-ons have been
+deprecated; no currently working add-on or login is guaranteed. Do not share
+your Foxtel credentials with this Docker service.
+
+1. In Kodi, enable *Settings > Services > Control > Allow remote control via
+   HTTP* and use a dedicated strong Kodi HTTP password. Restrict it to LAN.
+2. From Kodi IPTV Merge, export or locate the M3U generated for your own
+   Foxtel Kodi add-on. Copy it to
+   `full-stack/config/foxtel-guide/kodi-foxtel.m3u`. Kodi user-data locations
+   and IPTV Merge versions differ. This export contains `plugin://` URLs.
+3. Set the following in the private `full-stack/.env`, using the Kodi
+   machine's actual LAN address, not `127.0.0.1` inside Docker:
+
+       KODI_RPC_URL=http://YOUR_KODI_LAN_IP:8080/jsonrpc
+       KODI_RPC_USERNAME=kodi
+       KODI_RPC_PASSWORD=YOUR_STRONG_KODI_HTTP_PASSWORD
+
+4. Rebuild only the bridge:
+
+       docker compose --env-file .env -f compose.yml -f compose.foxtel-guide.yml up -d --no-deps --build foxtel-guide
+
+5. List the imported channel catalogue (the provider add-on URL is not
+   returned, only a channel identifier and metadata):
+
+       curl -fsS -H "Authorization: Bearer YOUR_FEED_TOKEN" http://YOUR_DOCKER_HOST_IP:8765/kodi/channels
+
+6. Request playback for a channel ID in the response. The video opens **on
+   the Kodi screen**, not in Jellyfin:
+
+       curl -fsS -X POST -H "Authorization: Bearer YOUR_FEED_TOKEN" -H "Content-Type: application/json" -d '{"channel_id":"PASTE_CHANNEL_ID"}' http://YOUR_DOCKER_HOST_IP:8765/kodi/play
+
+7. Check that Kodi is reachable:
+
+       curl -fsS -H "Authorization: Bearer YOUR_FEED_TOKEN" http://YOUR_DOCKER_HOST_IP:8765/kodi/status
+
+Only URLs targeting `plugin.video.foxtel.go` and `plugin.video.foxtel.now`
+can be imported and launched. Other Kodi plug-ins, arbitrary files, and
+arbitrary remote URLs are excluded. Playback requests use Kodi JSON-RPC
+`Player.Open`. No credentials or video are relayed through the bridge.
+
+The `/kodi/play` endpoint requires a POST, JSON and the bridge bearer token.
+If the installed Kodi Foxtel add-on is broken or its authentication is blocked,
+the bridge cannot repair that upstream provider issue. Kodi JSON-RPC
+acknowledgement confirms only that the **playback request was sent**, not that
+the stream successfully played. Keep Kodi's RPC interface isolated from the
+public Internet.
+
+The existing M3U/XMLTV Jellyfin endpoints remain separate from this feature:
+they include only mapped, independently licensed clear streams, not Kodi
+`plugin://` entries or Foxtel DRM streams.
