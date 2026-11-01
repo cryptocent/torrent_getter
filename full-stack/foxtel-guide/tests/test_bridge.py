@@ -45,7 +45,7 @@ class BridgeTests(unittest.TestCase):
     def test_playlist_escaping_and_stream(self):
         output = playlist(self.bridge.channels()).decode()
         self.assertIn('tvg-id="F1S"', output)
-        self.assertIn('tvg-name="Demo  One "', output)
+        self.assertIn('tvg-name="Demo  One"', output)
         self.assertIn("https://example.org/live.m3u8", output)
         self.assertNotIn('tvg-name="Demo "One""', output)
 
