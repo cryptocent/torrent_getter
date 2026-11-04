@@ -1,0 +1,282 @@
+# Foxtel-channel guide bridge for Jellyfin
+
+**Scope:** a functional, self-hosted M3U/XMLTV adapter for authorised clear streams, **not** a Foxtel Now login or DRM playback implementation.
+
+A paid Foxtel Now username/password does not itself supply Jellyfin-compatible video streams. This service does not log in to Foxtel, store Foxtel credentials, scrape protected video, circumvent DRM, or record Foxtel Now. **Never enter a Foxtel password into this service.**
+
+Features:
+- Downloads and caches an XMLTV channel guide with a six-hour default refresh, last-good fallback, and retry on failures.
+- Publishes token-protected M3U and XMLTV endpoints and lists EPG channel IDs.
+- Includes only channels explicitly mapped to independently licensed, directly playable HTTP(S) streams.
+- Runs as a non-root isolated container with a read-only configuration mount. It does not alter existing services or media volumes.
+
+The default guide URL is a publicly accessible, third-party source: https://i.mjh.nz/Foxtel/epg.xml.gz. It is **not affiliated with Foxtel**. Availability, licensing, accuracy and compatibility with the Foxtel Now channel lineup are not guaranteed. Only use guide data and stream URLs you are authorised to use.
+
+## Set up (in a checkout of this feature branch)
+
+Run these commands from your full-stack directory, for example /srv/media-ssd/apps/torrent_getter/full-stack. Adapt paths where necessary.
+
+    mkdir -p config/foxtel-guide
+    cp foxtel-guide/channels.example.json config/foxtel-guide/channels.json
+    python3 -c 'import secrets; print("FOXTEL_GUIDE_FEED_TOKEN=" + secrets.token_urlsafe(36))'
+    nano .env
+
+Paste the generated FOXTEL_GUIDE_FEED_TOKEN assignment into the private .env. Never commit the token. Edit config/foxtel-guide/channels.json to specify actual EPG IDs and **authorised clear stream URLs**. To start with no channels, use {"channels":[]}. If CONFIG_ROOT is customised in .env, place channels.json inside that path's foxtel-guide directory instead.
+
+The structure of each entry is:
+- tvg_id: guide channel ID shown by the /catalog endpoint
+- name: your channel display name
+- stream_url: your authorised, non-DRM HTTP(S) stream address
+- group (optional): Jellyfin group label
+- logo (optional): channel logo URL
+
+The example stream URL is intentionally invalid and must be replaced. Guide data alone cannot produce playable Foxtel Now video.
+
+## Start only the new container
+
+    cd /srv/media-ssd/apps/torrent_getter/full-stack
+    docker compose --env-file .env -f compose.yml -f compose.foxtel-guide.yml config --quiet
+    docker compose --env-file .env -f compose.yml -f compose.foxtel-guide.yml up -d --no-deps --build foxtel-guide
+    docker compose --env-file .env -f compose.yml -f compose.foxtel-guide.yml ps foxtel-guide
+
+This leaves Jellyfin, FastChannels, qBittorrent and the other containers untouched. The bridge joins the same media network as Jellyfin. The default published port is 8765, bound to HOST_BIND_IP (localhost unless your stack specifies otherwise).
+
+Query endpoints using the published IP and token:
+
+    curl -fsS "http://127.0.0.1:8765/catalog?token=YOUR_FEED_TOKEN"
+    curl -fsS "http://127.0.0.1:8765/status?token=YOUR_FEED_TOKEN"
+
+The /catalog endpoint displays exact tvg_id values from the XMLTV feed. Configure only guide IDs and independently authorised clear streams you intend to use. The bridge re-reads channels.json on each request, so mappings can be updated without restarting.
+
+## Configure Jellyfin Live TV
+
+In Jellyfin Dashboard > Live TV, add an M3U Tuner at:
+
+    http://foxtel-guide:8765/channels.m3u?token=YOUR_FEED_TOKEN
+
+Then add an XMLTV guide provider at:
+
+    http://foxtel-guide:8765/guide.xml?token=YOUR_FEED_TOKEN
+
+Refresh the guide. Both addresses are Docker-internal and only suitable for Jellyfin on the same media network. For browsers outside Docker, use the host IP and published port. The stream URLs in the M3U must be reachable and playable by Jellyfin.
+
+| Endpoint | Function |
+| --- | --- |
+| /healthz | Liveness check, no token required |
+| /status?token=... | Mappings count, guide cache status, errors and capabilities |
+| /catalog?token=... | Guide channel IDs and names |
+| /channels.m3u?token=... | M3U for explicitly configured streams |
+| /guide.xml?token=... | Filtered XMLTV matching the configured stream IDs |
+
+All endpoints except /healthz require the configured token. The Authorization: Bearer YOUR_FEED_TOKEN header works instead of the URL query token for manual callers.
+
+## Optional .env settings
+
+    FOXTEL_GUIDE_FEED_TOKEN=REPLACE_WITH_LONG_RANDOM_TOKEN
+    FOXTEL_GUIDE_SOURCE=https://i.mjh.nz/Foxtel/epg.xml.gz
+    FOXTEL_GUIDE_REFRESH_SECONDS=21600
+    FOXTEL_GUIDE_PORT=8765
+
+The token must contain at least 24 characters or startup fails. Remote guide downloads must use HTTPS. For a local guide instead, mount an XMLTV file in the configuration directory and set FOXTEL_GUIDE_SOURCE=/data/filename.xml or /data/filename.xml.gz. The bridge limits compressed downloads to 8 MiB and uncompressed XML to 32 MiB. Failure triggers a retry after five minutes, and the last good guide stays available.
+
+## Testing and diagnostics
+
+    python3 -m unittest discover -s full-stack/foxtel-guide/tests -v
+    docker build -t foxtel-guide-test full-stack/foxtel-guide
+
+Tests use synthetic channels and synthetic XMLTV only. They do not verify Foxtel credentials or streaming.
+
+If /channels.m3u is empty, create mappings in channels.json. HTTP 401 means the feed token is invalid. HTTP 400 signals a bad mapping or invalid source; HTTP 503 means the guide could not load and there is no cached guide. If Jellyfin lists a channel but cannot play it, check the independent upstream URL and encryption: this bridge neither proxies nor decrypts streams, and will not make protected Foxtel Now content playable.
+
+References:
+- https://jellyfin.org/docs/general/server/live-tv/
+- https://www.foxtel.com.au/now/support/how-it-works/eligible-devices.html
+- https://www.foxtel.com.au/now/about/terms.html
+
+## Install Kodi in the same Docker media stack (optional)
+
+**Yes: Kodi can now be deployed alongside Jellyfin using an opt-in Compose
+override.** This does not install a working Foxtel Now add-on and does **not**
+make paid Foxtel Now video available within Jellyfin. The historical Kodi
+Foxtel Go add-on is deprecated and was removed from the current SlyGuy
+catalogue. A Kodi player running in Docker also may not support protected
+video, audio or Widevine correctly through a virtual browser desktop.
+
+The optional image is [fhriley/kodi-headless-novnc:Omega](https://github.com/fhriley/kodi-headless-novnc).
+Its graphical Kodi desktop is available through an HTTP noVNC page. The
+image is a third-party Kodi build, not an official Foxtel application.
+
+### One-time configuration
+
+Start from your existing media stack checkout. Keep existing uncommitted changes
+intact and switch to this feature branch safely before continuing:
+
+    cd /srv/media-ssd/apps/torrent_getter
+    git status --short
+    git fetch origin feature/foxtel-guide-jellyfin-bridge
+    git switch feature/foxtel-guide-jellyfin-bridge
+
+If local changes prevent switching, resolve them first. **Do not use git reset
+--hard or delete existing config.**
+
+Use the private full-stack/.env that your deployment already has. Add a strong
+feed token if not yet set:
+
+    cd full-stack
+    python3 -c 'import secrets; print("FOXTEL_GUIDE_FEED_TOKEN=" + secrets.token_urlsafe(36))'
+    nano .env
+    chmod 600 .env
+
+Paste the generated assignment once into .env. The token is for the **bridge**,
+not your Foxtel account or Kodi password. Do not commit any credentials.
+
+Prepare and start the optional services only:
+
+    bash setup-kodi.sh --prepare-only
+    bash setup-kodi.sh
+
+This script checks combined Compose syntax, resolves CONFIG_ROOT, seeds
+Kodi's local database configuration only if missing, and creates an empty
+channel mapping only if missing. It then starts **only Kodi and foxtel-guide**.
+Jellyfin, qBittorrent and other production services are not recreated.
+
+The Kodi config is persisted in CONFIG_ROOT/kodi and the guide mapping is
+persisted in CONFIG_ROOT/foxtel-guide. Neither is added to source control.
+
+### Open Kodi and configure its remote control
+
+For security the unauthenticated Kodi noVNC desktop is bound by default to
+the Docker host's **localhost**, not the host's LAN address. From another
+computer use SSH local port forwarding:
+
+    ssh -L 8000:127.0.0.1:8000 jelly@YOUR_DOCKER_HOST_IP
+
+Then open http://127.0.0.1:8000 in the browser **on the SSH client device**.
+You can also open that URL directly in a browser on the Docker host.
+
+The noVNC desktop has **no built-in login**. Do not expose its port 8000
+publicly. If you explicitly choose LAN access, set KODI_GUI_BIND_IP to the
+server's trusted LAN address in .env, and secure access using a firewall or
+authenticated reverse proxy. The optional override never publishes Kodi's
+JSON-RPC port 8080 or VNC port 5900 to the host.
+
+Inside Kodi, go to **Settings > Services > Control** and enable HTTP remote
+control. Set a unique Kodi HTTP username/password (not your Foxtel password).
+Add the same Kodi HTTP credentials to the private full-stack/.env:
+
+    KODI_RPC_USERNAME=kodi
+    KODI_RPC_PASSWORD=REPLACE_WITH_KODI_HTTP_PASSWORD
+
+The Compose override automatically points the bridge to
+http://kodi:8080/jsonrpc on the isolated kodi-control Docker network.
+Redeploy **only the bridge** to apply any modified Kodi RPC credentials:
+
+    docker compose --env-file .env -f compose.yml -f compose.foxtel-guide.yml -f compose.kodi.yml up -d --no-deps --build foxtel-guide
+
+Kodi and the bridge share a dedicated Docker network separate from the
+other media containers. Jellyfin retains connectivity to the bridge on the
+original media network, but it cannot decode Kodi plugin URLs or Foxtel DRM.
+
+To check Kodi and the companion status after setting up Kodi:
+
+    docker compose --env-file .env -f compose.yml -f compose.foxtel-guide.yml -f compose.kodi.yml ps kodi foxtel-guide
+    docker compose --env-file .env -f compose.yml -f compose.foxtel-guide.yml -f compose.kodi.yml logs --tail=100 kodi foxtel-guide
+
+The Kodi control page remains available at:
+
+    http://YOUR_BRIDGE_HOST_IP:8765/kodi/ui?token=YOUR_FEED_TOKEN
+
+If HOST_BIND_IP in .env is localhost, use an SSH tunnel for bridge port 8765
+too. Add Kodi channel entries only from an authenticated and functioning Kodi
+Foxtel add-on. **Kodi itself contains no Foxtel credential login by default**.
+
+### Architecture and limitations
+
+    Browser --SSH tunnel--> Kodi noVNC :8000
+                                 |
+                           Kodi app/config
+                                 |  HTTP JSON-RPC :8080 (private network)
+                                 |
+    Jellyfin <--> foxtel-guide (M3U/XMLTV and Kodi channel launch)
+                                 |
+                         Independent authorised IPTV streams
+
+The Kodi browser desktop is useful for installing and configuring add-ons and
+testing a local Kodi playback request. It is **not** a guaranteed way to view
+DRM-protected Foxtel Now video in your browser or Jellyfin. Foxtel Now requires
+compatible authentication and playback support, which have not been verified.
+
+To stop just the optional Kodi companion, not the rest of the stack:
+
+    docker compose --env-file .env -f compose.yml -f compose.foxtel-guide.yml -f compose.kodi.yml stop kodi foxtel-guide
+
+Avoid `down -v` or deleting the Kodi data directory, as it would affect
+persisted settings and credentials.
+
+---
+
+## Optional Kodi Foxtel playback companion
+
+This **does not make Foxtel Now playable through Jellyfin**. It is a
+controlled way for the Docker service to request playback on a separately
+running Kodi device that has a working and authorised Foxtel add-on.
+
+**Prerequisites:** a Kodi installation with HTTP JSON-RPC enabled, the Kodi
+Foxtel Go or Foxtel Now add-on already installed, and a working authenticated
+subscription within that Kodi add-on. The historical Foxtel add-ons have been
+deprecated; no currently working add-on or login is guaranteed. Do not share
+your Foxtel credentials with this Docker service.
+
+1. In Kodi, enable *Settings > Services > Control > Allow remote control via
+   HTTP* and use a dedicated strong Kodi HTTP password. Restrict it to LAN.
+2. From Kodi IPTV Merge, export or locate the M3U generated for your own
+   Foxtel Kodi add-on. Copy it to
+   `full-stack/config/foxtel-guide/kodi-foxtel.m3u`. Kodi user-data locations
+   and IPTV Merge versions differ. This export contains `plugin://` URLs.
+3. Set the following in the private `full-stack/.env`, using the Kodi
+   machine's actual LAN address, not `127.0.0.1` inside Docker:
+
+       KODI_RPC_URL=http://YOUR_KODI_LAN_IP:8080/jsonrpc
+       KODI_RPC_USERNAME=kodi
+       KODI_RPC_PASSWORD=YOUR_STRONG_KODI_HTTP_PASSWORD
+
+4. Rebuild only the bridge:
+
+       docker compose --env-file .env -f compose.yml -f compose.foxtel-guide.yml up -d --no-deps --build foxtel-guide
+
+5. Open the optional visual Kodi remote page in a trusted LAN browser:
+
+       http://YOUR_DOCKER_HOST_IP:8765/kodi/ui?token=YOUR_FEED_TOKEN
+
+   The interface reports Kodi availability and provides Play on Kodi buttons.
+   Keep this token-bearing URL private.
+
+6. List the imported channel catalogue (the provider add-on URL is not
+   returned, only a channel identifier and metadata):
+
+       curl -fsS -H "Authorization: Bearer YOUR_FEED_TOKEN" http://YOUR_DOCKER_HOST_IP:8765/kodi/channels
+
+7. Request playback for a channel ID in the response. The video opens **on
+   the Kodi screen**, not in Jellyfin:
+
+       curl -fsS -X POST -H "Authorization: Bearer YOUR_FEED_TOKEN" -H "Content-Type: application/json" -d '{"channel_id":"PASTE_CHANNEL_ID"}' http://YOUR_DOCKER_HOST_IP:8765/kodi/play
+
+8. Check that Kodi is reachable:
+
+       curl -fsS -H "Authorization: Bearer YOUR_FEED_TOKEN" http://YOUR_DOCKER_HOST_IP:8765/kodi/status
+
+Only URLs targeting `plugin.video.foxtel.go` and `plugin.video.foxtel.now`
+can be imported and launched. Other Kodi plug-ins, arbitrary files, and
+arbitrary remote URLs are excluded. Playback requests use Kodi JSON-RPC
+`Player.Open`. No credentials or video are relayed through the bridge.
+
+The `/kodi/play` endpoint requires a POST, JSON and the bridge bearer token.
+If the installed Kodi Foxtel add-on is broken or its authentication is blocked,
+the bridge cannot repair that upstream provider issue. Kodi JSON-RPC
+acknowledgement confirms only that the **playback request was sent**, not that
+the stream successfully played. Keep Kodi's RPC interface isolated from the
+public Internet.
+
+The existing M3U/XMLTV Jellyfin endpoints remain separate from this feature:
+they include only mapped, independently licensed clear streams, not Kodi
+`plugin://` entries or Foxtel DRM streams.

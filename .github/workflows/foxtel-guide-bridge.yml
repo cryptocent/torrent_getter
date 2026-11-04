@@ -1,0 +1,63 @@
+name: Foxtel guide bridge checks
+
+on:
+  pull_request:
+    paths:
+      - "full-stack/foxtel-guide/**"
+      - "full-stack/compose.foxtel-guide.yml"
+      - "full-stack/compose.kodi.yml"
+      - "full-stack/setup-kodi.sh"
+      - ".github/workflows/foxtel-guide-bridge.yml"
+  push:
+    branches:
+      - feature/foxtel-guide-jellyfin-bridge
+    paths:
+      - "full-stack/foxtel-guide/**"
+      - "full-stack/compose.foxtel-guide.yml"
+      - "full-stack/compose.kodi.yml"
+      - "full-stack/setup-kodi.sh"
+      - ".github/workflows/foxtel-guide-bridge.yml"
+
+jobs:
+  offline-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python unit tests
+        run: python3 -m unittest discover -s full-stack/foxtel-guide/tests -v
+      - name: Verify Kodi installer shell syntax
+        run: bash -n full-stack/setup-kodi.sh
+      - name: Validate combined Kodi and media-stack Compose configuration
+        env:
+          FOXTEL_GUIDE_FEED_TOKEN: ci-validation-token-not-a-secret-123456789
+        run: |
+          docker compose --env-file full-stack/.env.example \
+            -f full-stack/compose.yml \
+            -f full-stack/compose.foxtel-guide.yml \
+            -f full-stack/compose.kodi.yml config --quiet
+      - name: Verify Kodi network and noVNC default bind isolation
+        env:
+          FOXTEL_GUIDE_FEED_TOKEN: ci-validation-token-not-a-secret-123456789
+        run: |
+          docker compose --env-file full-stack/.env.example \
+            -f full-stack/compose.yml \
+            -f full-stack/compose.foxtel-guide.yml \
+            -f full-stack/compose.kodi.yml config --format json > /tmp/foxtel-kodi-compose.json
+          python3 - <<'PY'
+          import json
+          with open('/tmp/foxtel-kodi-compose.json') as fh:
+              spec = json.load(fh)
+          kodi = spec['services']['kodi']
+          bridge = spec['services']['foxtel-guide']
+          assert 'kodi-control' in kodi['networks']
+          assert 'media' not in kodi['networks']
+          assert 'kodi-control' in bridge['networks']
+          assert 'media' in bridge['networks']
+          assert not any(p['target'] in (8080, 5900) for p in kodi.get('ports', []))
+          assert any(p['target'] == 8000 and p.get('host_ip') in ('127.0.0.1','::1')
+                     for p in kodi.get('ports', []))
+          assert bridge['environment']['KODI_RPC_URL'] == 'http://kodi:8080/jsonrpc'
+          print('Kodi isolated Compose network and port binding: PASS')
+          PY
+      - name: Docker image builds
+        run: docker build -t foxtel-guide-bridge:ci full-stack/foxtel-guide
